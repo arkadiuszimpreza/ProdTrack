@@ -1,0 +1,5 @@
+{
+  "name": "ProdSSS Erplast",
+  "description": "System do śledzenia czasu pracy (start-stop), meldowania ilości oraz importu zleceń produkcyjnych z plików Excel.",
+  "requestFramePermissions": []
+}

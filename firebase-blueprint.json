@@ -1,0 +1,141 @@
+{
+  "entities": {
+    "ProductionOrder": {
+      "title": "Production Order",
+      "description": "Zlecenie produkcyjne zaimportowane z ERP.",
+      "type": "object",
+      "properties": {
+        "orderNumber": { "type": "string", "description": "Numer zlecenia (ZP-nr)" },
+        "erpOrderNumber": { "type": "string", "description": "Zlecenie-nr" },
+        "productName": { "type": "string", "description": "Nazwa produktu" },
+        "targetQuantity": { "type": "number", "description": "Ilość planowana" },
+        "reportedQuantity": { "type": "number", "description": "Ilość zameldowana w systemie" },
+        "status": { "type": "string", "enum": ["pending", "in-progress", "completed"], "description": "Status zlecenia" },
+        "articleNumber": { "type": "string", "description": "Artykuł-nr" },
+        "clientName": { "type": "string", "description": "Nazwa klienta" },
+        "projectNumber": { "type": "string", "description": "Projekt-nr" },
+        "priority": { "type": "string", "description": "Prio." },
+        "unit": { "type": "string", "description": "JM" },
+        "unitArea": { "type": "number", "description": "Powierzchnia jednostkowa (m2)" },
+        "assortmentCategory": { "type": "string", "description": "Kategoria asortymentowa" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "importedAt": { "type": "string", "format": "date-time", "description": "Data pierwszego importu" },
+        "lastModifiedAt": { "type": "string", "format": "date-time", "description": "Data ostatniej zmiany" },
+        "lastModifiedBy": { "type": "string", "description": "Kto ostatnio zmienił (Nazwa/Email)" },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "weight": { "type": "number" }
+            },
+            "required": ["id", "name", "weight"]
+          },
+          "description": "Lista elementów składowych konstrukcji"
+        }
+      },
+      "required": ["orderNumber", "productName", "targetQuantity", "status"]
+    },
+    "WorkLog": {
+      "title": "Work Log",
+      "description": "Log czasu pracy pracownika nad zleceniem.",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string", "description": "ID zlecenia" },
+        "userId": { "type": "string", "description": "UID pracownika" },
+        "userName": { "type": "string", "description": "Imię i nazwisko pracownika" },
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": "string", "format": "date-time" },
+        "duration": { "type": "number", "description": "Czas trwania w sekundach" },
+        "quantityReported": { "type": "number", "description": "Ilość zameldowana w tej sesji" },
+        "elementId": { "type": "string", "description": "ID elementu zlecenia" },
+        "elementName": { "type": "string", "description": "Nazwa elementu zlecenia" },
+        "sessionId": { "type": "string", "description": "ID sesji zbiorowej" },
+        "stationId": { "type": "string", "description": "ID stanowiska" },
+        "stationName": { "type": "string", "description": "Nazwa stanowiska" }
+      },
+      "required": ["orderId", "userId", "startTime"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Profil użytkownika w systemie.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "worker", "operator"] }
+      },
+      "required": ["displayName", "email", "role"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Pracownik w systemie (niekoniecznie użytkownik).",
+      "type": "object",
+      "properties": {
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "group": { "type": "string" },
+        "position": { "type": "string" },
+        "displayName": { "type": "string" },
+        "rfidCard": { "type": "string", "description": "Numer karty RFID" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["firstName", "lastName", "displayName"]
+    },
+    "WorkStation": {
+      "title": "Work Station",
+      "description": "Stanowisko pracy (np. Lakiernia).",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name"]
+    },
+    "WorkSession": {
+      "title": "Work Session",
+      "description": "Sesja pracy zbiorowej na stanowisku.",
+      "type": "object",
+      "properties": {
+        "stationId": { "type": "string" },
+        "stationName": { "type": "string" },
+        "leaderId": { "type": "string" },
+        "leaderName": { "type": "string" },
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["active", "completed"] },
+        "memberIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["stationId", "leaderId", "startTime", "status"]
+    }
+  },
+  "firestore": {
+    "orders": {
+      "schema": "ProductionOrder",
+      "description": "Kolekcja zleceń produkcyjnych."
+    },
+    "workLogs": {
+      "schema": "WorkLog",
+      "description": "Kolekcja logów pracy."
+    },
+    "users": {
+      "schema": "User",
+      "description": "Kolekcja użytkowników."
+    },
+    "employees": {
+      "schema": "Employee",
+      "description": "Kolekcja pracowników."
+    },
+    "workStations": {
+      "schema": "WorkStation",
+      "description": "Kolekcja stanowisk pracy."
+    },
+    "workSessions": {
+      "schema": "WorkSession",
+      "description": "Kolekcja aktywnych sesji pracy zbiorowej."
+    }
+  }
+}

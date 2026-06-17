@@ -1,0 +1,164 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: orders
+// Fields:
+//   - orderNumber: string (required)
+//   - productName: string (required)
+//   - targetQuantity: number (required)
+//   - reportedQuantity: number (optional)
+//   - status: string (required, enum: ['pending', 'in-progress', 'completed'])
+//   - createdAt: timestamp (required)
+//   - elements: list (optional, items: {id: string, name: string, weight: number})
+//
+// Collection: workLogs
+// Fields:
+//   - orderId: string (required)
+//   - userId: string (required)
+//   - userName: string (required)
+//   - startTime: timestamp (required)
+//   - endTime: timestamp (optional)
+//   - duration: number (optional)
+//   - quantityReported: number (optional)
+//   - elementId: string (optional)
+//   - elementName: string (optional)
+//
+// Collection: users
+// Fields:
+//   - displayName: string (required)
+//   - email: string (required)
+//   - role: string (required, enum: ['admin', 'worker', 'operator'])
+//
+// Collection: employees
+// Fields:
+//   - firstName: string (required)
+//   - lastName: string (required)
+//   - group: string (optional)
+//   - position: string (optional)
+//   - rfidCard: string (optional)
+//   - displayName: string (required)
+//   - createdAt: timestamp (required)
+//
+// Collection: workStations
+// Fields:
+//   - name: string (required)
+//   - description: string (optional)
+//   - createdAt: timestamp (required)
+//
+// Collection: workSessions
+// Fields:
+//   - stationId: string (required)
+//   - stationName: string (required)
+//   - leaderId: string (required)
+//   - leaderName: string (required)
+//   - startTime: timestamp (required)
+//   - endTime: timestamp (optional)
+//   - status: string (required, enum: ['active', 'completed'])
+//   - memberIds: list (required, items: string)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "arkadiusz.biesiada@erplast.pl" && request.auth.token.email_verified == true));
+    }
+
+    function isValidOrder(data) {
+      return data.orderNumber is string && data.orderNumber.size() > 0 && data.orderNumber.size() < 100 &&
+             data.productName is string && data.productName.size() > 0 && data.productName.size() < 500 &&
+             data.targetQuantity is number && data.targetQuantity >= 0 &&
+             data.status in ['pending', 'in-progress', 'completed'] &&
+             (!('elements' in data) || (data.elements is list && data.elements.size() < 50));
+    }
+
+    function isValidWorkLog(data) {
+      return data.userId is string &&
+             data.startTime is timestamp &&
+             (!('orderId' in data) || data.orderId == null || (data.orderId is string && data.orderId.size() < 100)) &&
+             (!('sessionId' in data) || data.sessionId == null || (data.sessionId is string && data.sessionId.size() < 100)) &&
+             (!('stationId' in data) || data.stationId == null || (data.stationId is string && data.stationId.size() < 100)) &&
+             (!('stationName' in data) || data.stationName == null || (data.stationName is string && data.stationName.size() < 200)) &&
+             (!('elementId' in data) || data.elementId == null || (data.elementId is string && data.elementId.size() < 100)) &&
+             (!('elementName' in data) || data.elementName == null || (data.elementName is string && data.elementName.size() < 200));
+    }
+
+    function isValidUser(data) {
+      return data.displayName is string && data.displayName.size() > 0 &&
+             data.email is string && data.role in ['admin', 'worker', 'operator'];
+    }
+
+    function isValidEmployee(data) {
+      return data.firstName is string && data.firstName.size() > 0 &&
+             data.lastName is string && data.lastName.size() > 0 &&
+             data.displayName is string && data.displayName.size() > 0 &&
+             (!('rfidCard' in data) || data.rfidCard == null || (data.rfidCard is string && data.rfidCard.size() < 100));
+    }
+
+    function isValidWorkStation(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() < 500));
+    }
+
+    function isValidWorkSession(data) {
+      return data.stationId is string &&
+             data.leaderId is string &&
+             data.startTime is timestamp &&
+             data.status in ['active', 'completed'] &&
+             data.memberIds is list && data.memberIds.size() < 100;
+    }
+
+    // Rules
+    
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() || isOwner(userId);
+    }
+    
+    match /orders/{orderId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin();
+      allow update: if isAuthenticated() && isValidOrder(request.resource.data);
+      allow delete: if isAdmin();
+    }
+    
+    match /workLogs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidWorkLog(request.resource.data);
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /employees/{employeeId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidEmployee(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /workStations/{stationId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin() && isValidWorkStation(request.resource.data);
+    }
+
+    match /workSessions/{sessionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidWorkSession(request.resource.data);
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.leaderId || request.auth.uid in resource.data.memberIds || isAdmin());
+      allow delete: if isAdmin();
+    }
+  }
+}

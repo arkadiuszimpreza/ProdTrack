@@ -1,0 +1,153 @@
+100:  const handleZakupyImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+101-    const file = e.target.files?.[0];
+102-    if (!file) return;
+103-    setIsImporting(true);
+104-    setImportMessage(null);
+105-    try {
+106-      const parsedDeliveries = await parseZakupyInfo(file);
+107-      
+108-      // KROK: Pobieramy fizyczne wsady z bazy aby wyliczyć poprawnie Przyjęto WMS ("tylko i wyłączna na podstawie wsadów")
+109-      const inventorySnap = await getDocs(collection(db, 'inventoryBatches'));
+110-      const batchesSums: Record<string, number> = {};
+111-      
+112-      inventorySnap.docs.forEach(doc => {
+113-        const batch = doc.data();
+114-        if (batch.sourcePurchaseOrderId) {
+115-          // Sumujemy wszystkie wsady przypisane do danego zamówienia, niezależnie od tego czy z importu, czy ręczne
+116-          const qty = batch.initialQuantity ?? batch.numericQuantity ?? 0;
+117-          batchesSums[batch.sourcePurchaseOrderId] = (batchesSums[batch.sourcePurchaseOrderId] || 0) + qty;
+118-        }
+119-      });
+120-
+121-      const CHUNK_SIZE = 450; 
+122-      for (let i = 0; i < parsedDeliveries.length; i += CHUNK_SIZE) {
+123-        const batchWrite = writeBatch(db);
+124-        const chunk = parsedDeliveries.slice(i, i + CHUNK_SIZE);
+125-        
+126-        chunk.forEach(item => {
+127-          const docRef = doc(collection(db, 'expectedDeliveries'), item.id);
+128-          
+129-          // Przyjęto WMS = wyłącznie to co jest na wsadach
+130-          const wmsSum = batchesSums[item.id] || 0;
+131-          const newWmsDeliveredQuantity = wmsSum;
+132-          const newWmsTotalValue = newWmsDeliveredQuantity * (item.unitPrice || 0);
+133-          
+134-          const itemToSave = { 
+135-            ...item, 
+136-            wmsDeliveredQuantity: newWmsDeliveredQuantity,
+137-            wmsTotalValue: newWmsTotalValue,
+138-            importedAt: serverTimestamp(), 
+139-            lastModifiedAt: serverTimestamp() 
+140-          };
+141-          
+142-          batchWrite.set(docRef, itemToSave, { merge: true });
+143-        });
+144-        
+145-        await batchWrite.commit();
+146-      }
+147-      setImportMessage({ type: 'success', text: `Zaktualizowano listę oczekujących z ERP. Przeliczono "Przyjęto WMS".` });
+148-    } catch (error: any) {
+149-      setImportMessage({ type: 'error', text: error.message });
+150-    } finally {
+151-      setIsImporting(false);
+152-      e.target.value = ''; 
+153-    }
+154-  };
+155-
+156-  // =========================================================
+157-  // LOGIKA 3: Import Wsadów (Tabela Dostaw) z autokorektą i WYCENĄ
+158-  // =========================================================
+159-  const handleDeliveryImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+160-    const file = e.target.files?.[0];
+161-    if (!file) return;
+162-    setIsImporting(true);
+163-    setImportMessage(null);
+164-    try {
+165-      const parsedPhysicalBatches = await parseDeliveryTable(file);
+166-      const expectedSnap = await getDocs(collection(db, 'expectedDeliveries'));
+167-      const erpDeliveries = expectedSnap.docs.map(d => ({ ...d.data(), id: d.id }));
+168-      const inventorySnap = await getDocs(collection(db, 'inventoryBatches'));
+169-      const existingBatches = inventorySnap.docs.map(d => d.data());
+170-      setExistingYardBatches(existingBatches);
+171-      
+172-      const existingBatchNumbers = new Set(existingBatches.map((b: any) => b.batchNumber));
+173-      const results = matchBatchesWithERP(parsedPhysicalBatches, erpDeliveries);
+174-      results.forEach(res => { if (existingBatchNumbers.has(res.batch.batchNumber)) res.matchStatus = 'DUPLICATE'; });
+175-      
+176-      setMatchResults(results);
+177-      setShowMatchModal(true); 
+178-    } catch (error: any) {
+179-      setImportMessage({ type: 'error', text: error.message });
+180-    } finally {
+181-      setIsImporting(false);
+182-      e.target.value = ''; 
+183-    }
+184-  };
+185-
+186-  const handleConfirmMatch = async () => {
+187-    setIsSavingBatches(true);
+188-    try {
+189-      const batchWrite = writeBatch(db);
+190-      const validResults = matchResults.filter(r => r.matchStatus !== 'DUPLICATE');
+191-      
+192-      // Struktura śledząca też cenę
+193-      const poUpdates: Record<string, { qtyToAdd: number, unitPrice: number }> = {};
+194-
+195-      validResults.forEach(res => {
+196-        const newBatchRef = doc(collection(db, 'inventoryBatches'));
+197-        const batchData: any = { ...res.batch, createdAt: serverTimestamp(), createdBy: 'Import' };
+198-        
+199-        if (res.matchedPurchaseOrder) {
+200-          batchData.sourcePurchaseOrderId = res.matchedPurchaseOrder.id;
+201-          const poId = res.matchedPurchaseOrder.id;
+202-          if (!poUpdates[poId]) {
+203-            poUpdates[poId] = { qtyToAdd: 0, unitPrice: res.matchedPurchaseOrder.unitPrice || 0 };
+204-          }
+205-          poUpdates[poId].qtyToAdd += res.batch.numericQuantity;
+206-        }
+207-        
+208-        batchWrite.set(newBatchRef, batchData);
+209-      });
+210-
+211-      // Samonaprawa ilości i wycena
+212-      for (const [poId, data] of Object.entries(poUpdates)) {
+213-         const actuallyOnYard = existingYardBatches
+214-            .filter(b => b.sourcePurchaseOrderId === poId)
+215-            .reduce((sum, b) => sum + (b.numericQuantity || 0), 0);
+216-         
+217-         const absoluteNewTotal = actuallyOnYard + data.qtyToAdd;
+218-         
+219-         const poRef = doc(db, 'expectedDeliveries', poId);
+220-         batchWrite.update(poRef, { 
+221-           wmsDeliveredQuantity: absoluteNewTotal, 
+222-           wmsTotalValue: absoluteNewTotal * data.unitPrice,
+223-           lastModifiedAt: serverTimestamp() 
+224-         });
+225-      }
+226-
+227-      await batchWrite.commit();
+228-      setImportMessage({ type: 'success', text: `Gotowe! Zapisano ${validResults.length} wsadów na Plac i zaktualizowano wyceny.` });
+229-      setShowMatchModal(false);
+230-    } catch (err: any) {
+231-      setImportMessage({ type: 'error', text: err.message });
+232-    } finally {
+233-      setIsSavingBatches(false);
+234-    }
+235-  };
+236-
+237-  // =========================================================
+238-  // LOGIKA 4: Import Stany Inwentaryzacyjne (Wgranie Bilansu Otwarcia)
+239-  // =========================================================
+240-  const handleInventoryBOImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+241-    const file = e.target.files?.[0];
+242-    if (!file) return;
+243-    setIsImporting(true);
+244-    setImportMessage(null);
+245-    try {
+246-      const parsedBalances = await parseInventoryBalances(file);
+247-      
+248-      const CHUNK_SIZE = 450; 
+249-      for (let i = 0; i < parsedBalances.length; i += CHUNK_SIZE) {
+250-        const batchWrite = writeBatch(db);
+251-        const chunk = parsedBalances.slice(i, i + CHUNK_SIZE);
+252-        
