@@ -7,7 +7,21 @@ import { cn } from '../../utils/firestore-helpers';
 
 type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'FA' | 'SR' | 'INNE';
 
-const guessPrefix = (name: string): string => {
+// Półautomat do kategoryzowania materiałów.
+// Przyjmuje opcjonalny numer artykułu z ERP, który ma najwyższy priorytet –
+// dzięki temu SKT/SKD/SKK/SKC są zawsze klasyfikowane jako 'PR'.
+const guessPrefix = (name: string, articleNumber?: string): string => {
+  // PRIORYTET 1: Klasyfikacja po prefiksie numeru ERP (deterministyczna)
+  if (articleNumber) {
+    const num = articleNumber.trim().toUpperCase();
+    if (
+      num.startsWith('SKT') ||
+      num.startsWith('SKD') ||
+      num.startsWith('SKK') ||
+      num.startsWith('SKC')
+    ) return 'PR';
+  }
+  // PRIORYTET 2: Analiza nazwy słownej
   if (!name) return 'INNE';
   const n = name.toLowerCase();
   if (n.includes('rura')) return 'RU';
@@ -49,7 +63,7 @@ export function InventoryZeroingView({ currentUser }: Props) {
     
     return batches.filter(b => {
       // 1. Sprawdzanie kategorii
-      if (selectedCategory !== 'ALL' && guessPrefix(b.articleName || '') !== selectedCategory) {
+      if (selectedCategory !== 'ALL' && guessPrefix(b.articleName || '', b.articleNumber) !== selectedCategory) {
         return false;
       }
       

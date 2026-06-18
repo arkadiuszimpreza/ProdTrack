@@ -6,17 +6,33 @@ import { InventoryBatch, MaterialWithdrawal } from '../../types';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 
-const guessPrefix = (name: string): string => {
+// Półautomat do kategoryzowania materiałów.
+// Przyjmuje opcjonalny numer artykułu z ERP, który ma najwyższy priorytet –
+// dzięki temu SKT/SKD/SKK/SKC (kształtowniki, ceowniki, profile specjalne)
+// są zawsze klasyfikowane jako 'PR', niezależnie od nazwy słownej.
+const guessPrefix = (name: string, articleNumber?: string): string => {
+  // PRIORYTET 1: Klasyfikacja po prefiksie numeru ERP (deterministyczna)
+  // SK* = kształtowniki / ceowniki / profile specjalne → traktowane jak profile (PR)
+  if (articleNumber) {
+    const num = articleNumber.trim().toUpperCase();
+    if (
+      num.startsWith('SKT') ||
+      num.startsWith('SKD') ||
+      num.startsWith('SKK') ||
+      num.startsWith('SKC')
+    ) return 'PR';
+  }
+
+  // PRIORYTET 2: Analiza nazwy słownej (fallback gdy brak numeru ERP)
   if (!name) return 'INNE';
   const n = name.toLowerCase();
   if (n.includes('rura')) return 'RU';
   if (n.includes('blacha') || n.includes('płyta')) return 'BL';
-  if (n.includes('profil') || n.includes('pręt') || n.includes('ceownik')) return 'PR';
+  if (n.includes('profil') || n.includes('pręt') || n.includes('ceownik') || n.includes('dwuteownik') || n.includes('kątownik') || n.includes('teownik') || n.includes('płaskownik') || n.includes('wałek')) return 'PR';
   if (n.includes('farba') || n.includes('proszek')) return 'FA';
   if (n.includes('śruba') || n.includes('sruba') || n.includes('wkręt') || n.includes('nakrętka') || n.includes('podkładka')) return 'SR';
   return 'INNE'; 
 };
-
 type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'FA' | 'SR';
 
 interface MaterialWithdrawalViewProps {

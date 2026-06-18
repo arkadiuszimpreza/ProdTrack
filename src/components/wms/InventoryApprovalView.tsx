@@ -6,7 +6,21 @@ import { InventoryBatch, InventoryAdjustment, InventoryCount } from '../../types
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 
-const guessPrefix = (name: string): string => {
+// Półautomat do kategoryzowania materiałów.
+// Przyjmuje opcjonalny numer artykułu z ERP, który ma najwyższy priorytet –
+// dzięki temu SKT/SKD/SKK/SKC są zawsze klasyfikowane jako 'PR'.
+const guessPrefix = (name: string, articleNumber?: string): string => {
+  // PRIORYTET 1: Klasyfikacja po prefiksie numeru ERP (deterministyczna)
+  if (articleNumber) {
+    const num = articleNumber.trim().toUpperCase();
+    if (
+      num.startsWith('SKT') ||
+      num.startsWith('SKD') ||
+      num.startsWith('SKK') ||
+      num.startsWith('SKC')
+    ) return 'PR';
+  }
+  // PRIORYTET 2: Analiza nazwy słownej
   if (!name) return 'INNE';
   const n = name.toLowerCase();
   if (n.includes('rura')) return 'RU';
@@ -80,7 +94,7 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
   const pendingDrafts = useMemo(() => batches.filter(b => b.draftQuantity !== undefined && b.draftQuantity !== null), [batches]);
 
   const handleApproveInventory = async () => {
-    const draftsToApprove = pendingDrafts.filter(b => approvalCategory === 'ALL' || guessPrefix(b.articleName || '') === approvalCategory);
+    const draftsToApprove = pendingDrafts.filter(b => approvalCategory === 'ALL' || guessPrefix(b.articleName || '', b.articleNumber) === approvalCategory);
 
     if (draftsToApprove.length === 0) return alert('Brak wsadów do zatwierdzenia w wybranym asortymencie.');
     if (!window.confirm(`Zatwierdzić inwentaryzację dla ${draftsToApprove.length} wsadów z asortymentu ${approvalCategory}?\nZostaną zaktualizowane stany magazynowe i powstanie lista różnic.`)) return;
@@ -294,7 +308,7 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
           
           <button
             onClick={handleApproveInventory}
-            disabled={pendingDrafts.filter(b => approvalCategory === 'ALL' || guessPrefix(b.articleName || '') === approvalCategory).length === 0 || isProcessing}
+            disabled={pendingDrafts.filter(b => approvalCategory === 'ALL' || guessPrefix(b.articleName || '', b.articleNumber) === approvalCategory).length === 0 || isProcessing}
             className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-black text-xs uppercase tracking-wider hover:bg-emerald-700 disabled:bg-stone-300 disabled:text-stone-500 transition-all shadow-sm active:scale-95 flex items-center gap-2"
           >
             <AlertTriangle size={16} /> Zatwierdź dla: {approvalCategory === 'ALL' ? 'WSZYSTKO' : approvalCategory}
@@ -302,14 +316,14 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-          {pendingDrafts.filter(b => approvalCategory === 'ALL' || guessPrefix(b.articleName || '') === approvalCategory).length === 0 ? (
+          {pendingDrafts.filter(b => approvalCategory === 'ALL' || guessPrefix(b.articleName || '', b.articleNumber) === approvalCategory).length === 0 ? (
             <div className="h-full flex items-center justify-center text-stone-400 font-bold text-sm">
               Brak wykrytych różnic / wsadów do zatwierdzenia w tym asortymencie.
             </div>
           ) : (
             <div className="space-y-2">
               {pendingDrafts
-                .filter(b => approvalCategory === 'ALL' || guessPrefix(b.articleName || '') === approvalCategory)
+                .filter(b => approvalCategory === 'ALL' || guessPrefix(b.articleName || '', b.articleNumber) === approvalCategory)
                 .map(b => {
                 const diff = Number((b.draftQuantity! - (b.numericQuantity || 0)).toFixed(3));
                 const editStr = approvalDraftEdits[b.id as string];

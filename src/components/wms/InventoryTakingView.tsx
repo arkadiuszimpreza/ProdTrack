@@ -6,8 +6,24 @@ import { InventoryBatch, InventoryAdjustment, InventoryCount, InventoryArticle }
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 
-// Półautomat do kategoryzowania materiałów
-const guessPrefix = (name: string): string => {
+// Półautomat do kategoryzowania materiałów.
+// Przyjmuje opcjonalny numer artykułu z ERP, który ma najwyższy priorytet –
+// dzięki temu SKT/SKD/SKK/SKC (kształtowniki, ceowniki, profile specjalne)
+// są zawsze klasyfikowane jako 'PR', niezależnie od nazwy słownej.
+const guessPrefix = (name: string, articleNumber?: string): string => {
+  // PRIORYTET 1: Klasyfikacja po prefiksie numeru ERP (deterministyczna)
+  // SK* = kształtowniki / ceowniki / profile specjalne → traktowane jak profile (PR)
+  if (articleNumber) {
+    const num = articleNumber.trim().toUpperCase();
+    if (
+      num.startsWith('SKT') ||
+      num.startsWith('SKD') ||
+      num.startsWith('SKK') ||
+      num.startsWith('SKC')
+    ) return 'PR';
+  }
+
+  // PRIORYTET 2: Analiza nazwy słownej (fallback gdy brak numeru ERP)
   if (!name) return 'INNE';
   const n = name.toLowerCase();
   if (n.includes('rura')) return 'RU';
@@ -320,7 +336,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
       const cur = prev[batchId] || { pieces: '', length: extractLengthFromDimensions(batch.dimensions) };
       const next = { ...cur, [field]: val };
       const p = parseFloat(next.pieces.replace(',', '.'));
-      const type = guessPrefix(batch.articleName || '');
+      const type = guessPrefix(batch.articleName || '', batch.articleNumber);
 
       if (type === 'BL') {
         const coeffStr = String(batch.coefficient || '').replace(/,/g, '.');
@@ -403,6 +419,16 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
           }
         }
 
+        // Optymalizacja kosztów: archiwizacja starych count-ów odbywa się
+        // wewnątrz tej samej transakcji co zapis nowego draftu.
+        // Eliminuje to drugi roundtrip do Firestore (osobny writeBatch).
+        if (mode === 'replace') {
+          const oldCounts = counts.filter(c => c.batchId === batch.id && !c.archived);
+          oldCounts.forEach(c => {
+            transaction.update(doc(db, 'inventoryCounts', c.id as string), { archived: true });
+          });
+        }
+
         transaction.update(batchRef, {
           draftQuantity: calculatedDraftQty,
           draftUpdatedAt: serverTimestamp(),
@@ -418,16 +444,6 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
           archived: false
         });
       });
-      
-      // Jeżeli to 'replace', puszczamy asynchronicznie update starych wpisów
-      if (mode === 'replace') {
-        const oldCounts = counts.filter(c => c.batchId === batch.id && c.id !== newCountRef.id && !c.archived);
-        if (oldCounts.length > 0) {
-           const batchOp = writeBatch(db);
-           oldCounts.forEach(c => batchOp.update(doc(db, 'inventoryCounts', c.id as string), { archived: true }));
-           await batchOp.commit();
-        }
-      }
 
       setActualQuantities(prev => {
         const next = { ...prev };
@@ -688,7 +704,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                     const isMatchedBySearch = !!(searchArticle.trim() && (b.batchNumber || '').toLowerCase().includes(searchArticle.toLowerCase().trim()));
                     const inputVal = actualQuantities[b.id as string] || '';
                     const isDrafted = b.draftQuantity !== undefined && b.draftQuantity !== null;
-                    const canUseCalc = ['RU', 'PR', 'BL'].includes(guessPrefix(b.articleName || ''));
+                    const canUseCalc = ['RU', 'PR', 'BL'].includes(guessPrefix(b.articleName || '', b.articleNumber));
                     const useCalc = canUseCalc;
                     const cv = calcValues[b.id] || { pieces: '', length: extractLengthFromDimensions(b.dimensions) };
                     const hasInput = inputVal.trim() !== '';
@@ -834,12 +850,12 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                                    value={cv.pieces}
                                    onChange={(e) => handleCalcChange(b.id as string, 'pieces', e.target.value, b)}
                                    className={cn(
-                                     (guessPrefix(b.articleName || '') === 'BL') ? "w-full px-2 py-1 border rounded-xl text-center font-black text-sm transition-all outline-none min-w-0" : "w-1/2 px-2 py-1 border rounded-xl text-center font-black text-sm transition-all outline-none min-w-0",
+                                     (guessPrefix(b.articleName || '', b.articleNumber) === 'BL') ? "w-full px-2 py-1 border rounded-xl text-center font-black text-sm transition-all outline-none min-w-0" : "w-1/2 px-2 py-1 border rounded-xl text-center font-black text-sm transition-all outline-none min-w-0",
                                      cv.pieces ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
                                    )}
                                  />
                                  
-                                 {guessPrefix(b.articleName || '') !== 'BL' && (
+                                 {guessPrefix(b.articleName || '', b.articleNumber) !== 'BL' && (
                                    <>
                                      <div className="flex items-center text-stone-400 text-xs font-bold px-1">x</div>
                                      <input
@@ -991,7 +1007,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                {guessPrefix(splittingBatch.articleName || '') === 'BL' ? (
+                {guessPrefix(splittingBatch.articleName || '', splittingBatch.articleNumber) === 'BL' ? (
                   <>
                     <div>
                       <label className="block text-[10px] font-black uppercase text-stone-500 mb-1">Stan w systemie (Szt)</label>
