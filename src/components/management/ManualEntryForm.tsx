@@ -23,7 +23,8 @@ export function ManualEntryForm({
     quantity: number, 
     startTime: Date, 
     endTime: Date, 
-    assortmentCategory: string 
+    assortmentCategory: string,
+    order?: ProductionOrder | null
   }) => Promise<void> 
 }) {
   const [orderId, setOrderId] = useState('');
@@ -130,6 +131,7 @@ export function ManualEntryForm({
     setIsSubmitting(true);
     await onSubmit({
       orderId: orderId || null,
+      order: selectedOrder || null,
       userId,
       hours: finalHours,
       quantity: quantity ? parseFloat(quantity) : 0,

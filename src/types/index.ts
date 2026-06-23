@@ -203,7 +203,7 @@ export interface Employee {
   createdAt?: any;
 }
 
-export type UserRole = 'admin' | 'worker' | 'operator' | 'magazynier';
+export type UserRole = 'admin' | 'worker' | 'operator' | 'magazynier' | 'operator-wms';
 
 /**
  * Profil użytkownika systemu (osoby logującej się przez Google).
@@ -216,7 +216,7 @@ export interface UserProfile {
   displayName: string;
   /** Adres e-mail użytkownika */
   email: string;
-  /** Rola w systemie (admin - pełny dostęp, worker - podgląd, operator - terminal) */
+  /** Rola w systemie (admin - pełny dostęp, worker - podgląd, operator - terminal, operator-wms - terminal z opcją wms) */
   role: UserRole;
   /** Opcjonalne imię */
   firstName?: string;
@@ -331,6 +331,7 @@ export interface PurchaseOrderItem {
   // Finanse (Dla wyceny WIP i Magazynu)
   unitPrice?: number;
   wmsTotalValue?: number; // Wartość fizycznie przyjętego towaru
+  wmsDeliveredQuantity?: number;
   currency?: string; // "Waluta" (np. PLN)
   
   // Daty

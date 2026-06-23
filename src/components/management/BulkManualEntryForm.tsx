@@ -25,7 +25,8 @@ export function BulkManualEntryForm({
     quantity: number, 
     startTime: Date, 
     endTime: Date, 
-    assortmentCategory: string 
+    assortmentCategory: string,
+    order?: ProductionOrder | null
   }[]) => Promise<void> 
 }) {
   const [userId, setUserId] = useState('');
@@ -221,9 +222,12 @@ export function BulkManualEntryForm({
         const startTime = new Date(year, month - 1, day, 7, 0, 0);
         const endTime = new Date(startTime.getTime() + h * 3600 * 1000);
         
+        const order = row.orderId ? availableOrders.find(o => o.id === row.orderId) || null : null;
+
         return {
           id: row.id,
           orderId: row.orderId || null,
+          order: order,
           userId,
           hours: h,
           quantity: row.quantity ? parseFloat(row.quantity) : 0,

@@ -56,7 +56,10 @@ export function ExpectedDeliveriesView({ onReceiveClick }: ExpectedDeliveriesPro
 
     // A. Filtr trybu: Tylko niepełne lub Wszystkie zamówienia
     if (filterMode === 'pending_only') {
-      result = result.filter(item => item.quantityRemaining > 0 && item.status !== 'COMPLETED' && item.status !== 'OVERDELIVERED');
+      result = result.filter(item => {
+        const wmsDelivered = item.wmsDeliveredQuantity || 0;
+        return wmsDelivered < item.quantityOrdered;
+      });
     }
 
     // B. Wyszukiwarka tekstowa
@@ -139,7 +142,7 @@ export function ExpectedDeliveriesView({ onReceiveClick }: ExpectedDeliveriesPro
       {/* COMPACT TABLE - ERP STYLE WITH PROJECT-NR */}
       <div className="bg-white border border-stone-200 rounded-xl shadow-sm overflow-hidden flex-1 flex flex-col min-h-[500px] h-[calc(100vh-250px)]">
         <div className="overflow-auto flex-1 relative">
-          <table className="text-left border-collapse whitespace-nowrap table-auto w-full min-w-max">
+          <table className="text-left border-collapse whitespace-nowrap table-auto w-full">
             <thead className="sticky top-0 z-10 shadow-sm outline outline-1 outline-stone-200">
               <tr className="bg-stone-100 text-[10px] font-black uppercase tracking-wider text-stone-500 select-none">
                 <th className="p-0 border-r border-stone-200 cursor-pointer hover:bg-stone-200 transition-colors" onClick={() => handleSort('supplierName')}>
@@ -157,8 +160,8 @@ export function ExpectedDeliveriesView({ onReceiveClick }: ExpectedDeliveriesPro
                 <th className="p-0 border-r border-stone-200 cursor-pointer hover:bg-stone-200 transition-colors" onClick={() => handleSort('articleNumber')}>
                   <div className="flex items-center gap-1 overflow-hidden resize-x w-28 min-w-[50px] px-2 py-1">Artykuł-Nr <ArrowUpDown size={10} className="shrink-0"/></div>
                 </th>
-                <th className="p-0 border-r border-stone-200">
-                  <div className="flex items-center overflow-hidden resize-x w-64 min-w-[50px] px-2 py-1">Nazwa</div>
+                <th className="p-0 border-r border-stone-200 w-full min-w-[200px]">
+                  <div className="flex items-center overflow-hidden px-2 py-1">Nazwa</div>
                 </th>
                 <th className="p-0 border-r border-stone-200 text-right">
                   <div className="flex items-center justify-end overflow-hidden resize-x w-20 min-w-[50px] px-2 py-1">Ilość</div>
@@ -193,7 +196,8 @@ export function ExpectedDeliveriesView({ onReceiveClick }: ExpectedDeliveriesPro
               </tr>
             ) : (
               processedDeliveries.map(item => {
-                const isItemCompleted = item.quantityRemaining <= 0 || item.status === 'COMPLETED' || item.status === 'OVERDELIVERED';
+                const wmsDelivered = item.wmsDeliveredQuantity || 0;
+                const isItemCompleted = wmsDelivered >= item.quantityOrdered;
                 
                 return (
                   <tr 

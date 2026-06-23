@@ -479,44 +479,60 @@ function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: Producti
           if (el) elementNameForLog = el.name;
         }
 
-        const updateOrderAndElementQty = async (orderId: string, elementId: string | undefined, deltaQty: number) => {
-          if (!orderId) return null;
-          const orderRef = doc(db, 'orders', orderId);
-          const orderSnap = await transaction.get(orderRef);
-          if (orderSnap.exists()) {
-            const data = orderSnap.data();
-            const newAppQty = Math.max(0, (data.appReportedQuantity || 0) + deltaQty);
-            const newStatus = calculateOrderStatus(data.erpReportedQuantity || 0, newAppQty, data.targetQuantity);
-            
-            let updatedElements = data.elements || [];
-            if (elementId && updatedElements.length > 0) {
-              updatedElements = updatedElements.map((el: any) => {
-                if (el.id === elementId) {
-                  return { ...el, reportedQuantity: Math.max(0, (el.reportedQuantity || 0) + deltaQty) };
-                }
-                return el;
-              });
-            }
-            
-            transaction.update(orderRef, { 
-              appReportedQuantity: newAppQty, 
-              status: newStatus,
-              elements: updatedElements
-            });
-            return data;
+        // PHASE 1: READS
+        let oldOrderSnap: any = null;
+        let newOrderSnap: any = null;
+        let sameOrderSnap: any = null;
+
+        if (oldOrderId !== newOrderId || oldElementId !== newElementId) {
+          if (oldOrderId) {
+            oldOrderSnap = await transaction.get(doc(db, 'orders', oldOrderId));
           }
-          return null;
+          if (newOrderId) {
+            newOrderSnap = await transaction.get(doc(db, 'orders', newOrderId));
+          }
+        } else if (oldOrderId && oldOrderId === newOrderId && oldElementId === newElementId) {
+          sameOrderSnap = await transaction.get(doc(db, 'orders', oldOrderId));
+        }
+
+        // PHASE 2: WRITES
+        const updateOrderAndElementQty = (orderId: string, elementId: string | undefined, deltaQty: number, snapToUse: any) => {
+          if (!orderId || !snapToUse || !snapToUse.exists()) return null;
+          const orderRef = doc(db, 'orders', orderId);
+          const data = snapToUse.data();
+          const newAppQty = Math.max(0, (data.appReportedQuantity || 0) + deltaQty);
+          let newStatus = data.status; // fallback
+          if (data.targetQuantity !== undefined) {
+             newStatus = calculateOrderStatus(data.erpReportedQuantity || 0, newAppQty, data.targetQuantity);
+          }
+          
+          let updatedElements = data.elements || [];
+          if (elementId && updatedElements.length > 0) {
+            updatedElements = updatedElements.map((el: any) => {
+              if (el.id === elementId) {
+                return { ...el, reportedQuantity: Math.max(0, (el.reportedQuantity || 0) + deltaQty) };
+              }
+              return el;
+            });
+          }
+          
+          transaction.update(orderRef, { 
+            appReportedQuantity: newAppQty, 
+            status: newStatus,
+            elements: updatedElements
+          });
+          return data;
         };
 
         if (oldOrderId !== newOrderId || oldElementId !== newElementId) {
-          if (oldOrderId) await updateOrderAndElementQty(oldOrderId, oldElementId, -oldQty);
+          if (oldOrderId) updateOrderAndElementQty(oldOrderId, oldElementId, -oldQty, oldOrderSnap);
           if (newOrderId) {
-            const newOrderData = await updateOrderAndElementQty(newOrderId, newElementId, safeQuantity);
+            const newOrderData = updateOrderAndElementQty(newOrderId, newElementId, safeQuantity, newOrderSnap);
             if (newOrderData) orderNameForLog = newOrderData.orderNumber;
           }
         } else if (oldOrderId && oldOrderId === newOrderId && oldElementId === newElementId) {
           const delta = safeQuantity - oldQty;
-          const orderData = await updateOrderAndElementQty(oldOrderId, oldElementId, delta);
+          const orderData = updateOrderAndElementQty(oldOrderId, oldElementId, delta, sameOrderSnap);
           if (orderData) orderNameForLog = orderData.orderNumber;
         }
 
@@ -551,31 +567,36 @@ function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: Producti
         if (!logSnap.exists()) return; 
         
         const logData = logSnap.data();
+        
+        // READ PHASE
+        let orderSnap: any = null;
         if (logData.orderId) {
-          const orderRef = doc(db, 'orders', logData.orderId);
-          const orderSnap = await transaction.get(orderRef);
-          if (orderSnap.exists()) {
-            const orderData = orderSnap.data();
-            const qtyToSubtract = logData.quantityReported || 0;
-            const newAppQty = Math.max(0, (orderData.appReportedQuantity || 0) - qtyToSubtract);
-            const newStatus = calculateOrderStatus(orderData.erpReportedQuantity || 0, newAppQty, orderData.targetQuantity);
-            
-            let updatedElements = orderData.elements || [];
-            if (logData.elementId && updatedElements.length > 0) {
-              updatedElements = updatedElements.map((el: any) => {
-                if (el.id === logData.elementId) {
-                  return { ...el, reportedQuantity: Math.max(0, (el.reportedQuantity || 0) - qtyToSubtract) };
-                }
-                return el;
-              });
-            }
+          orderSnap = await transaction.get(doc(db, 'orders', logData.orderId));
+        }
 
-            transaction.update(orderRef, { 
-              appReportedQuantity: newAppQty, 
-              status: newStatus,
-              elements: updatedElements
+        // WRITE PHASE
+        if (logData.orderId && orderSnap && orderSnap.exists()) {
+          const orderRef = doc(db, 'orders', logData.orderId);
+          const orderData = orderSnap.data();
+          const qtyToSubtract = logData.quantityReported || 0;
+          const newAppQty = Math.max(0, (orderData.appReportedQuantity || 0) - qtyToSubtract);
+          const newStatus = calculateOrderStatus(orderData.erpReportedQuantity || 0, newAppQty, orderData.targetQuantity);
+          
+          let updatedElements = orderData.elements || [];
+          if (logData.elementId && updatedElements.length > 0) {
+            updatedElements = updatedElements.map((el: any) => {
+              if (el.id === logData.elementId) {
+                return { ...el, reportedQuantity: Math.max(0, (el.reportedQuantity || 0) - qtyToSubtract) };
+              }
+              return el;
             });
           }
+
+          transaction.update(orderRef, { 
+            appReportedQuantity: newAppQty, 
+            status: newStatus,
+            elements: updatedElements
+          });
         }
         transaction.delete(logRef);
       });

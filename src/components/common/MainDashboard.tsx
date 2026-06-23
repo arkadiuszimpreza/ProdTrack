@@ -3,7 +3,7 @@ import {
   Package, Clock, Search, X, Trash2, Upload, List, AlertTriangle, 
   CheckCircle2, LogOut, Info, Settings, LayoutList, Boxes, History, 
   Activity, BarChart2, PenTool, Users, Briefcase, FileText, Menu, ChevronRight,
-  Truck, BookOpen, PackageMinus, ClipboardCheck, PackagePlus, RotateCcw, Archive
+  Truck, BookOpen, PackageMinus, ClipboardCheck, PackagePlus, RotateCcw, Archive, FileSpreadsheet
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInSeconds } from 'date-fns';
@@ -50,7 +50,7 @@ import { WMSImportView } from '../wms/WMSImportView';
 import { SequenceMigration } from '../wms/SequenceMigration';
 import { DraftMigration } from '../wms/DraftMigration';
 import { InventoryZeroingView } from '../wms/InventoryZeroingView';
-import { ArchivedCountsView } from '../wms/ArchivedCountsView';
+import { MaterialReservationsView } from '../wms/MaterialReservationsView';
 
 interface MainDashboardProps {
   user: any;
@@ -97,7 +97,7 @@ interface MainDashboardProps {
 }
 
 export function MainDashboard(props: MainDashboardProps) {
-  const [view, setView] = useState<'orders' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'stations' | 'docs' | 'live' | 'wms-inventory' | 'wms-deliveries' | 'wms-registry' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-archived-counts'>('live'); 
+  const [view, setView] = useState<'orders' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'stations' | 'docs' | 'live' | 'wms-inventory' | 'wms-deliveries' | 'wms-registry' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations'>('live'); 
   const [searchTerm, setSearchTerm] = useState('');
   const [activeStatuses, setActiveStatuses] = useState<ProductionOrder['status'][]>(['pending', 'in-progress', 'reported', 'completed']);
   const [manualEntryVersion, setManualEntryVersion] = useState<1 | 2>(1);
@@ -352,10 +352,18 @@ export function MainDashboard(props: MainDashboardProps) {
             </div>
 
             {props.user?.email === 'arkadiusz.biesiada@erplast.pl' && (
-              <div className="mt-2 flex bg-stone-100 p-1 rounded-lg border border-stone-200">
-                {(['admin', 'worker', 'operator', 'magazynier'] as const).map((r) => (
-                  <button key={r} onClick={() => props.setOverrideRole(r)} className={cn("flex-1 py-1 text-[10px] font-black uppercase tracking-tighter rounded transition-all", (props.overrideRole || props.profile?.role) === r ? "bg-white text-stone-900 shadow-sm" : "text-stone-400 hover:text-stone-600")}>{r}</button>
-                ))}
+              <div className="mt-2 text-stone-600">
+                <select
+                  value={props.overrideRole || props.profile?.role || ''}
+                  onChange={(e) => props.setOverrideRole(e.target.value as any)}
+                  className="w-full bg-stone-100 border border-stone-200 text-stone-700 text-xs font-bold uppercase tracking-wider rounded-lg p-2 outline-none cursor-pointer hover:bg-stone-200 transition-colors"
+                >
+                  <option value="admin">ADMIN</option>
+                  <option value="worker">WORKER</option>
+                  <option value="operator">OPERATOR</option>
+                  <option value="operator-wms">OPERATOR WMS</option>
+                  <option value="magazynier">MAGAZYNIER</option>
+                </select>
               </div>
             )}
           </div>
@@ -377,6 +385,7 @@ export function MainDashboard(props: MainDashboardProps) {
                 <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mt-6 mb-2">Magazyn WMS</h4>
                 <div className="space-y-1">
                   <SidebarItem active={view === 'wms-inventory'} onClick={() => { setView('wms-inventory'); setIsSidebarOpen(false); }} icon={<Package size={18} />} text="Stan Placu" />
+                  <SidebarItem active={view === 'wms-reservations'} onClick={() => { setView('wms-reservations'); setIsSidebarOpen(false); }} icon={<FileSpreadsheet size={18} />} text="Rezerwacje Materiałowe" />
                   <SidebarItem active={view === 'wms-deliveries'} onClick={() => { setView('wms-deliveries'); setIsSidebarOpen(false); }} icon={<Truck size={18} />} text="Zakupy (Oczekujące)" />
                   <SidebarItem active={view === 'wms-registry'} onClick={() => { setView('wms-registry'); setIsSidebarOpen(false); }} icon={<BookOpen size={18} />} text="Katalog Artykułów" />
                   <SidebarItem active={view === 'wms-wip'} onClick={() => { setView('wms-wip'); setIsSidebarOpen(false); }} icon={<PackageMinus size={18} />} text="Pobranie na Produkcję" />
@@ -384,7 +393,6 @@ export function MainDashboard(props: MainDashboardProps) {
                   <SidebarItem active={view === 'wms-taking'} onClick={() => { setView('wms-taking'); setIsSidebarOpen(false); }} icon={<ClipboardCheck size={18} />} text="Spis z Natury" />
                   <SidebarItem active={view === 'wms-zeroing'} onClick={() => { setView('wms-zeroing'); setIsSidebarOpen(false); }} icon={<Archive size={18} />} text="Zeruj Inwentaryzację" />
                   <SidebarItem active={view === 'wms-approval'} onClick={() => { setView('wms-approval'); setIsSidebarOpen(false); }} icon={<CheckCircle2 size={18} />} text="Różnice / Zatwierdź" />
-                  <SidebarItem active={view === 'wms-archived-counts'} onClick={() => { setView('wms-archived-counts'); setIsSidebarOpen(false); }} icon={<Archive size={18} />} text="Zarchiwizowane Zliczenia" />
                   <SidebarItem active={view === 'wms-import'} onClick={() => { setView('wms-import'); setIsSidebarOpen(false); }} icon={<Upload size={18} />} text="Wymiana Danych (ERP)" />
                   <SidebarItem active={view === 'wms-receipts'} onClick={() => { setView('wms-receipts'); setIsSidebarOpen(false); }} icon={<History size={18} />} text="Ręczne Przyjęcia" />
                 </div>
@@ -427,7 +435,7 @@ export function MainDashboard(props: MainDashboardProps) {
           </header>
 
           <main className="flex-1 overflow-y-auto p-4 md:p-8 print:p-0 print:overflow-visible custom-scrollbar scroll-smooth">
-            <div className="max-w-5xl mx-auto space-y-6 pb-24">
+            <div className={cn("mx-auto space-y-6 pb-24", view.startsWith('wms-') ? "w-full max-w-[1920px]" : "max-w-5xl")}>
               
               {/* MODALS */}
               <AnimatePresence>
@@ -572,7 +580,9 @@ export function MainDashboard(props: MainDashboardProps) {
                     </div>
                   </div>
                   {manualEntryVersion === 1 ? (
-                    <ManualEntryForm orders={props.orders} employees={props.employees} onSubmit={async (data) => { if (await props.onAddManualLog(data.orderId, data.userId, data.hours, data.quantity, data.startTime, data.endTime, data.assortmentCategory)) setView('orders'); }} />
+                    <ManualEntryForm orders={props.orders} employees={props.employees} onSubmit={async (data) => { 
+                      if (await props.onAddManualLogs([{ id: Math.random().toString(36).substr(2, 9), ...data }])) setView('orders'); 
+                    }} />
                   ) : (
                     <BulkManualEntryForm orders={props.orders} employees={props.employees} onSubmit={async (entries) => { await props.onAddManualLogs(entries); }} />
                   )}
@@ -614,6 +624,8 @@ export function MainDashboard(props: MainDashboardProps) {
                 <ReportsView employees={props.employees} orders={props.orders} />
               ) : view === 'wms-inventory' && isWMSUser ? (
                 <InventoryYardView />
+              ) : view === 'wms-reservations' && isWMSUser ? (
+                <MaterialReservationsView />
               ) : view === 'wms-deliveries' && isWMSUser ? (
                 <ExpectedDeliveriesView onReceiveClick={setItemToReceive} />
               ) : view === 'wms-registry' && isWMSUser ? (
@@ -626,8 +638,6 @@ export function MainDashboard(props: MainDashboardProps) {
                 <InventoryTakingView currentUser={currentUser} />
               ) : view === 'wms-zeroing' && isWMSUser ? (
                 <InventoryZeroingView currentUser={currentUser} />
-              ) : view === 'wms-archived-counts' && isWMSUser ? (
-                <ArchivedCountsView />
               ) : view === 'wms-approval' && isWMSUser ? (
                 <InventoryApprovalView currentUser={currentUser} />
               ) : view === 'wms-receipts' && isWMSUser ? (

@@ -28,6 +28,8 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { RFIDLogin } from './components/common/RFIDLogin';
 import { OperatorPanel } from './components/production/OperatorPanel';
 import { MainDashboard } from './components/common/MainDashboard';
+import { WMSOperatorDashboard } from './components/wms/WMSOperatorDashboard';
+import { VirtualKeyboard } from './components/common/VirtualKeyboard';
 
 // --- Utils ---
 import { cn } from './utils/firestore-helpers';
@@ -40,8 +42,10 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [overrideRole, setOverrideRole] = useState<UserProfile['role'] | null>(null);
   
-  const currentRole = overrideRole || profile?.role;
+  const currentRole = (overrideRole || profile?.role)?.toLowerCase() as UserRole | undefined;
   const isAdmin = currentRole === 'admin';
+  const showKeyboard = !isAdmin && currentRole !== 'magazynier';
+  const [wmsMode, setWmsMode] = useState(false);
 
   // 2. Dyspozytor Danych (Nasz wydzielony Hook do odczytu)
   const { 
@@ -197,36 +201,64 @@ export default function App() {
     </div>
   );
 
-  if (currentRole === 'operator' && !currentOperator) {
-    return <RFIDLogin employees={employees} onLogin={(emp) => setCurrentOperator(emp)} onLogoutDevice={handleLogout} />;
+  if ((currentRole === 'operator' || currentRole === 'operator-wms') && !currentOperator) {
+    return (
+      <>
+        <RFIDLogin employees={employees} onLogin={(emp) => setCurrentOperator(emp)} onLogoutDevice={handleLogout} />
+        {showKeyboard && <VirtualKeyboard />}
+      </>
+    );
   }
 
-  if (currentOperator && currentRole === 'operator') {
-    return <OperatorPanel 
-      operator={currentOperator} orders={orders} activeLog={activeLog} allActiveLogs={allActiveLogs} 
-      workStations={workStations} activeSessions={activeSessions} 
-      onLogout={() => setCurrentOperator(null)} 
-      onStartWork={startWork} 
-      onStopWork={stopWork} 
-      onStartTeamWork={startTeamWork} 
-      onJoinTeam={joinTeam} 
-    />;
+  if (currentOperator && (currentRole === 'operator' || currentRole === 'operator-wms')) {
+    if (wmsMode && currentRole === 'operator-wms') {
+       return (
+         <>
+           <WMSOperatorDashboard 
+             user={user} profile={profile} currentOperator={currentOperator}
+             onLogout={() => { setWmsMode(false); setCurrentOperator(null); }}
+             onBackToOperator={() => setWmsMode(false)}
+           />
+           {showKeyboard && <VirtualKeyboard />}
+         </>
+       );
+    }
+
+    return (
+      <>
+        <OperatorPanel 
+          operator={currentOperator} orders={orders} activeLog={activeLog} allActiveLogs={allActiveLogs} 
+          workStations={workStations} activeSessions={activeSessions} 
+          onLogout={() => setCurrentOperator(null)} 
+          onStartWork={startWork} 
+          onStopWork={stopWork} 
+          onStartTeamWork={startTeamWork} 
+          onJoinTeam={joinTeam} 
+          deviceRole={currentRole}
+          onWmsClick={() => setWmsMode(true)}
+        />
+        {showKeyboard && <VirtualKeyboard />}
+      </>
+    );
   }
 
   return (
-    <MainDashboard 
-      user={user} profile={profile} isAdmin={isAdmin} orders={orders} employees={employees} 
-      workStations={workStations} activeSessions={activeSessions} activeLog={activeLog} allActiveLogs={allActiveLogs}
-      currentOperator={currentOperator || employees.find(e => e.id === user?.uid) || null}
-      onLogout={handleLogout} onStartWork={startWork} onStopWork={stopWork} onDeleteOrder={deleteOrder} 
-      onClearDatabase={clearDatabase} onExcelImport={handleExcelImport} onConfirmImport={confirmImport}
-      onAddEmployee={addEmployee} onDeleteEmployee={deleteEmployee} onUpdateEmployee={updateEmployee} 
-      onEmployeeImport={handleEmployeeImport} onClearEmployees={async () => true} 
-      onAddStation={addWorkStation} onUpdateStation={updateWorkStation} onDeleteStation={deleteWorkStation}
-      onAddManualLog={async (o, e, h, q, s, en, c) => true} onAddManualLogs={addManualLogs}
-      importConflicts={importConflicts} setImportConflicts={setImportConflicts} pendingNewOrders={pendingNewOrders} setPendingNewOrders={setPendingNewOrders}
-      showImportModal={showImportModal} setShowImportModal={setShowImportModal} isImporting={isImporting} importSummary={importSummary} onClearSummary={() => setImportSummary(null)}
-      overrideRole={overrideRole} setOverrideRole={setOverrideRole}
-    />
+    <>
+      <MainDashboard 
+        user={user} profile={profile} isAdmin={isAdmin} orders={orders} employees={employees} 
+        workStations={workStations} activeSessions={activeSessions} activeLog={activeLog} allActiveLogs={allActiveLogs}
+        currentOperator={currentOperator || employees.find(e => e.id === user?.uid) || null}
+        onLogout={handleLogout} onStartWork={startWork} onStopWork={stopWork} onDeleteOrder={deleteOrder} 
+        onClearDatabase={clearDatabase} onExcelImport={handleExcelImport} onConfirmImport={confirmImport}
+        onAddEmployee={addEmployee} onDeleteEmployee={deleteEmployee} onUpdateEmployee={updateEmployee} 
+        onEmployeeImport={handleEmployeeImport} onClearEmployees={async () => true} 
+        onAddStation={addWorkStation} onUpdateStation={updateWorkStation} onDeleteStation={deleteWorkStation}
+        onAddManualLog={async (o, e, h, q, s, en, c) => true} onAddManualLogs={addManualLogs}
+        importConflicts={importConflicts} setImportConflicts={setImportConflicts} pendingNewOrders={pendingNewOrders} setPendingNewOrders={setPendingNewOrders}
+        showImportModal={showImportModal} setShowImportModal={setShowImportModal} isImporting={isImporting} importSummary={importSummary} onClearSummary={() => setImportSummary(null)}
+        overrideRole={overrideRole} setOverrideRole={setOverrideRole}
+      />
+      {showKeyboard && <VirtualKeyboard />}
+    </>
   );
 }

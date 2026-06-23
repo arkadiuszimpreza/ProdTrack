@@ -12,7 +12,8 @@ import {
   Factory, 
   X, 
   CheckCircle2,
-  Play
+  Play,
+  Package
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -23,7 +24,6 @@ import { parseSearchTerms, matchesAllTerms } from '../../utils/search';
 import { ActiveTimer } from './ActiveTimer';
 import { OrderCard } from './OrderCard';
 import { ElementSelectionModal } from '../common/ElementSelectionModal';
-import { VirtualNumpad } from './VirtualNumpad';
 
 interface OperatorPanelProps {
   operator: Employee;
@@ -38,6 +38,8 @@ interface OperatorPanelProps {
   onStopWork: (reports?: { orderId: string; quantity: number }[]) => Promise<void> | void;
   onStartTeamWork: (station: WorkStation) => Promise<void> | void;
   onJoinTeam: (session: WorkSession) => Promise<void> | void;
+  deviceRole?: UserRole;
+  onWmsClick?: () => void;
 }
 
 export function OperatorPanel({
@@ -51,12 +53,13 @@ export function OperatorPanel({
   onStartWork,
   onStopWork,
   onStartTeamWork,
-  onJoinTeam
+  onJoinTeam,
+  deviceRole,
+  onWmsClick
 }: OperatorPanelProps) {
   const [timeLeft, setTimeLeft] = useState(30);
   const [timerKey, setTimerKey] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
-  const [showNumpad, setShowNumpad] = useState(false);
   const [mode, setMode] = useState<'individual' | 'start-team' | 'join-team' | null>(null);
   const [selectingElementOrder, setSelectingElementOrder] = useState<ProductionOrder | null>(null);
 
@@ -166,12 +169,13 @@ export function OperatorPanel({
         )}
       </AnimatePresence>
 
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="bg-white p-8 md:p-12 rounded-[3rem] shadow-2xl max-w-5xl w-full text-center border border-stone-100 relative overflow-hidden"
-      >
-        <div className="absolute top-0 left-0 right-0 h-2 bg-stone-100">
+      <div className="w-full max-w-[1200px] flex items-stretch justify-center gap-6">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white p-8 md:p-12 rounded-[3rem] shadow-2xl flex-1 text-center border border-stone-100 relative overflow-hidden"
+        >
+          <div className="absolute top-0 left-0 right-0 h-2 bg-stone-100">
           <motion.div 
             key={timerKey}
             initial={{ width: '100%' }}
@@ -270,7 +274,7 @@ export function OperatorPanel({
           <div className="space-y-8 mb-8">
             <div className="flex items-center gap-4 mb-4">
               <button 
-                onClick={() => { setMode(null); setShowNumpad(false); }}
+                onClick={() => { setMode(null); }}
                 className="p-2 hover:bg-stone-100 rounded-full transition-colors"
               >
                 <ArrowLeft size={24} />
@@ -290,7 +294,6 @@ export function OperatorPanel({
                   placeholder="Szukaj zlecenia (wprowadź numer)..."
                   inputMode="none" // Zapobiega pokazywaniu się domyślnej klawiatury systemowej
                   value={searchTerm}
-                  onFocus={() => setShowNumpad(true)}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-12 pr-24 py-4 bg-white border border-stone-200 rounded-2xl shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-bold text-xl"
                 />
@@ -305,24 +308,6 @@ export function OperatorPanel({
                   )}
                 </div>
               </div>
-
-              <AnimatePresence>
-                {showNumpad && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10, height: 0 }}
-                    animate={{ opacity: 1, y: 0, height: 'auto' }}
-                    exit={{ opacity: 0, y: -10, height: 0 }}
-                    className="overflow-hidden mt-2"
-                  >
-                     <VirtualNumpad 
-                        value={searchTerm} 
-                        onChange={setSearchTerm} 
-                        onClose={() => setShowNumpad(false)}
-                        showClose={true}
-                     />
-                  </motion.div>
-                )}
-              </AnimatePresence>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 text-left">
@@ -426,6 +411,27 @@ export function OperatorPanel({
           </div>
         </div>
       </motion.div>
+      
+      {deviceRole === 'operator-wms' && !mode && !activeLog && (
+        <motion.div
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="w-56 shrink-0 flex items-stretch h-full min-h-[400px]"
+        >
+          <button
+            onClick={onWmsClick}
+            className="w-full h-full bg-blue-600 rounded-[3rem] shadow-xl text-center border border-blue-700 flex flex-col justify-center items-center hover:bg-blue-700 transition-colors p-6 group"
+          >
+            <div className="text-white mb-6 group-hover:scale-110 transition-transform">
+              <Package size={64} />
+            </div>
+            <span className="text-white font-black text-2xl leading-tight">
+              Przejdź do<br/>magazynu
+            </span>
+          </button>
+        </motion.div>
+      )}
+      </div>
     </div>
   );
 }

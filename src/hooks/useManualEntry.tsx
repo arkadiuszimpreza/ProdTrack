@@ -8,6 +8,7 @@ export interface ManualEntryPayload {
   id: string;
   userId: string;
   orderId: string | null;
+  order?: ProductionOrder | null;
   startTime: Date;
   endTime: Date;
   quantity: number;
@@ -25,12 +26,15 @@ export function useManualEntry(employees: Employee[], orders: ProductionOrder[])
       const batch = writeBatch(db);
       
       // Słownik będzie agregował więcej danych dla zlecenia
-      const orderUpdates: Record<string, { addedQuantity: number, newCategory: string | null }> = {};
+      const orderUpdates: Record<string, { addedQuantity: number, newCategory: string | null, orderRef: ProductionOrder }> = {};
 
       // --- ETAP 1: Przetwarzanie wpisów pracowniczych ---
       for (const entry of entries) {
         const employee = employees.find(e => e.id === entry.userId);
-        const order = entry.orderId ? orders.find(o => o.id === entry.orderId) : null;
+        let order = entry.order || null;
+        if (!order && entry.orderId) {
+            order = orders.find(o => o.id === entry.orderId) || null;
+        }
 
         if (!employee) {
            console.warn(`Pominięto wpis: brak pracownika w bazie dla ID: ${entry.userId}`);
@@ -53,8 +57,8 @@ export function useManualEntry(employees: Employee[], orders: ProductionOrder[])
         batch.set(logRef, {
           userId: employee.id,
           userName: employee.displayName || `${employee.firstName} ${employee.lastName}`,
-          orderId: order?.id || null,
-          orderNumber: order?.orderNumber || 'Praca ogólna',
+          orderId: entry.orderId || order?.id || null,
+          orderNumber: order?.orderNumber || (entry.orderId ? 'Archiwalne Zlecenie' : 'Praca ogólna'),
           startTime: Timestamp.fromDate(start),
           endTime: Timestamp.fromDate(end),
           duration: duration,
@@ -69,7 +73,7 @@ export function useManualEntry(employees: Employee[], orders: ProductionOrder[])
         // Agregacja dla Zlecenia
         if (order) {
           if (!orderUpdates[order.id]) {
-            orderUpdates[order.id] = { addedQuantity: 0, newCategory: null };
+            orderUpdates[order.id] = { addedQuantity: 0, newCategory: null, orderRef: order };
           }
           // Dodajemy wyprodukowane sztuki
           orderUpdates[order.id].addedQuantity += (entry.quantity || 0);
@@ -83,7 +87,7 @@ export function useManualEntry(employees: Employee[], orders: ProductionOrder[])
 
       // --- ETAP 2: Aktualizacja zleceń produkcyjnych ---
       for (const [orderId, updateData] of Object.entries(orderUpdates)) {
-        const order = orders.find(o => o.id === orderId);
+        const order = updateData.orderRef;
         if (order) {
           // BEZPIECZNY FALLBACK: Pobieramy aktualne stany lub 0, jeśli zlecenie jest stare
           const currentAppQty = order.appReportedQuantity || 0;

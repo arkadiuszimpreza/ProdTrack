@@ -671,9 +671,16 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                                           return copy;
                                         });
                                       } else {
+                                        const parsed = parseFloat(val) || 0;
+                                        const maxQty = b.numericQuantity || 0;
+                                        const finalVal = Math.min(maxQty, parsed);
+                                        // Synchronizuj DOM dla klawiatury ekranowej
+                                        if (parsed > maxQty) {
+                                          e.target.value = finalVal.toString();
+                                        }
                                         setWithdrawalQuantities(prev => ({ 
                                           ...prev, 
-                                          [b.id as string]: Math.min(b.numericQuantity || 0, parseFloat(val) || 0)
+                                          [b.id as string]: finalVal
                                         }));
                                       }
                                     }}
