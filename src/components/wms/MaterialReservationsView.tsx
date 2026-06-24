@@ -137,10 +137,11 @@ export function MaterialReservationsView() {
       const reader = new FileReader();
 
       reader.onload = (evt) => {
-        const bstr = evt.target?.result;
-        if (!bstr) return;
+        const arrayBuffer = evt.target?.result;
+        if (!arrayBuffer) return;
 
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const dataArr = new Uint8Array(arrayBuffer as ArrayBuffer);
+        const wb = XLSX.read(dataArr, { type: 'array' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         
@@ -156,18 +157,44 @@ export function MaterialReservationsView() {
         if (data.length < 2) return; // Need at least header + 1 row
 
         const headerRow = data[0];
-        const constructionsList: { name: string; enabled: boolean; originalColIndexes: number[] }[] = [];
-
-        for (let colStr = 5; colStr < headerRow.length; colStr++) {
-          let baseName = String(headerRow[colStr] || '').trim();
-          if (baseName !== '') {
-            const existing = constructionsList.find(c => c.name === baseName);
-            if (existing) {
-              existing.originalColIndexes.push(colStr);
-            } else {
-              constructionsList.push({ name: baseName, enabled: true, originalColIndexes: [colStr] });
-            }
+        
+        // Find the maximum columns across all rows in the sheet
+        let maxCols = headerRow.length;
+        for (let r = 0; r < data.length; r++) {
+          if (data[r] && data[r].length > maxCols) {
+            maxCols = data[r].length;
           }
+        }
+
+        const constructionsList: { name: string; enabled: boolean; originalColIndexes: number[] }[] = [];
+        const nameCounts = new Map<string, number>();
+        let lastValidBaseName = `Kolumna`;
+
+        for (let colStr = 5; colStr < maxCols; colStr++) {
+          let baseName = String(headerRow[colStr] || '').trim();
+          
+          if (baseName !== '') {
+            lastValidBaseName = baseName;
+          } else {
+            // Check if there is actually any quantity in this column across all rows
+            let hasAnyQty = false;
+            for (let r = 1; r < data.length; r++) {
+              if (data[r] && data[r][colStr] !== undefined && data[r][colStr] !== null && data[r][colStr] !== '') {
+                hasAnyQty = true;
+                break;
+              }
+            }
+            if (!hasAnyQty) continue;
+            
+            // Inherit name from the last valid column (handles merged Excel cells)
+            baseName = lastValidBaseName;
+          }
+
+          const count = nameCounts.get(baseName) || 0;
+          nameCounts.set(baseName, count + 1);
+          
+          const uniqueName = count === 0 ? baseName : `${baseName} (#${count + 1})`;
+          constructionsList.push({ name: uniqueName, enabled: true, originalColIndexes: [colStr] });
         }
 
         const newRows: ReservationRow[] = [];
@@ -200,8 +227,10 @@ export function MaterialReservationsView() {
             let totalQty = 0;
             for (const colIdx of cons.originalColIndexes) {
               const qtyRaw = row[colIdx];
-              const qty = parseFloat(String(qtyRaw).replace(',', '.')) || 0;
-              totalQty += qty;
+              if (qtyRaw !== undefined && qtyRaw !== null && qtyRaw !== '') {
+                const qty = parseFloat(String(qtyRaw).replace(',', '.')) || 0;
+                totalQty += qty;
+              }
             }
             if (totalQty > 0) {
               rowQuantities[cons.name] = totalQty;
@@ -234,7 +263,7 @@ export function MaterialReservationsView() {
         });
       };
 
-      reader.readAsBinaryString(file);
+      reader.readAsArrayBuffer(file);
     }
     // reset input
     e.target.value = '';

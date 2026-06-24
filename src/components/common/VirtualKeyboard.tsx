@@ -41,6 +41,45 @@ export function VirtualKeyboard() {
     };
   }, []);
 
+  // Dynamic padding and scrolling
+  useEffect(() => {
+    let scrollParent: HTMLElement | null = null;
+    const paddingVal = '400px';
+
+    if (activeInput) {
+      // Znajdź najbliższego rodzica, który ma overflow-y-auto lub overflow-auto
+      let parent = activeInput.parentElement;
+      while (parent && parent !== document.body) {
+        const style = window.getComputedStyle(parent);
+        if (style.overflowY === 'auto' || style.overflowY === 'scroll' || style.overflow === 'auto' || style.overflow === 'scroll') {
+          scrollParent = parent;
+          break;
+        }
+        parent = parent.parentElement;
+      }
+
+      if (!scrollParent) {
+         scrollParent = document.body;
+      }
+
+      // Zapisz oryginalny padding by go przywrócić
+      const originalPadding = scrollParent.style.paddingBottom;
+      scrollParent.style.paddingBottom = `calc(${originalPadding || '0px'} + ${paddingVal})`;
+
+      // Scroll into view
+      const timeoutId = setTimeout(() => {
+        activeInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 150);
+
+      return () => {
+        clearTimeout(timeoutId);
+        if (scrollParent) {
+           scrollParent.style.paddingBottom = originalPadding;
+        }
+      };
+    }
+  }, [activeInput]);
+
   const handleClose = () => {
     setActiveInput(null);
   };
@@ -50,6 +89,13 @@ export function VirtualKeyboard() {
     
     // Focus the input just in case it lost focus
     activeInput.focus();
+
+    // Przetwarzanie przecinka dla type="number" (rozwiązanie błędu czyszczenia pola)
+    // Pola type="number" wewnętrznie używają '.' jako separatora dziesiętnego
+    let charToInsert = char;
+    if (activeInput.type === 'number' && charToInsert === ',') {
+      charToInsert = '.';
+    }
 
     let start = 0;
     let end = 0;
@@ -67,26 +113,39 @@ export function VirtualKeyboard() {
     }
 
     const oldVal = activeInput.value;
-    const newVal = oldVal.substring(0, start) + char + oldVal.substring(end);
     
-    // Set value natively to avoid React overriding it immediately
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-    
-    if (activeInput.tagName === 'INPUT' && nativeInputValueSetter) {
-        nativeInputValueSetter.call(activeInput, newVal);
-    } else if (activeInput.tagName === 'TEXTAREA' && nativeTextAreaValueSetter) {
-        nativeTextAreaValueSetter.call(activeInput, newVal);
-    } else {
-        activeInput.value = newVal;
+    // First try execCommand which natively handles type="number" edge cases like "1."
+    // and correctly fires events.
+    activeInput.focus();
+    let execSuccess = false;
+    try {
+      execSuccess = document.execCommand('insertText', false, charToInsert);
+    } catch (e) {
+      execSuccess = false;
     }
 
-    try {
-      if (activeInput.type !== 'number') {
-        activeInput.setSelectionRange(start + char.length, start + char.length);
+    if (!execSuccess) {
+      // Fallback to manual value manipulation if execCommand is blocked/unsupported
+      const newVal = oldVal.substring(0, start) + charToInsert + oldVal.substring(end);
+      
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+      
+      if (activeInput.tagName === 'INPUT' && nativeInputValueSetter) {
+          nativeInputValueSetter.call(activeInput, newVal);
+      } else if (activeInput.tagName === 'TEXTAREA' && nativeTextAreaValueSetter) {
+          nativeTextAreaValueSetter.call(activeInput, newVal);
+      } else {
+          activeInput.value = newVal;
       }
-    } catch {}
-    activeInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+      try {
+        if (activeInput.type !== 'number') {
+          activeInput.setSelectionRange(start + charToInsert.length, start + charToInsert.length);
+        }
+      } catch {}
+      activeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
   };
 
   const handleBackspace = () => {
@@ -110,34 +169,43 @@ export function VirtualKeyboard() {
 
     if (start === 0 && end === 0) return;
     
-    const oldVal = activeInput.value;
-    let newVal;
-    let newPos;
-    if (start === end) {
-        newVal = oldVal.substring(0, start - 1) + oldVal.substring(end);
-        newPos = start - 1;
-    } else {
-        newVal = oldVal.substring(0, start) + oldVal.substring(end);
-        newPos = start;
-    }
-    
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-    
-    if (activeInput.tagName === 'INPUT' && nativeInputValueSetter) {
-        nativeInputValueSetter.call(activeInput, newVal);
-    } else if (activeInput.tagName === 'TEXTAREA' && nativeTextAreaValueSetter) {
-        nativeTextAreaValueSetter.call(activeInput, newVal);
-    } else {
-        activeInput.value = newVal;
+    let execSuccess = false;
+    try {
+      execSuccess = document.execCommand('delete', false);
+    } catch (e) {
+      execSuccess = false;
     }
 
-    try {
-      if (activeInput.type !== 'number') {
-        activeInput.setSelectionRange(newPos, newPos);
+    if (!execSuccess) {
+      const oldVal = activeInput.value;
+      let newVal;
+      let newPos;
+      if (start === end) {
+          newVal = oldVal.substring(0, start - 1) + oldVal.substring(end);
+          newPos = start - 1;
+      } else {
+          newVal = oldVal.substring(0, start) + oldVal.substring(end);
+          newPos = start;
       }
-    } catch {}
-    activeInput.dispatchEvent(new Event('input', { bubbles: true }));
+      
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+      
+      if (activeInput.tagName === 'INPUT' && nativeInputValueSetter) {
+          nativeInputValueSetter.call(activeInput, newVal);
+      } else if (activeInput.tagName === 'TEXTAREA' && nativeTextAreaValueSetter) {
+          nativeTextAreaValueSetter.call(activeInput, newVal);
+      } else {
+          activeInput.value = newVal;
+      }
+
+      try {
+        if (activeInput.type !== 'number') {
+          activeInput.setSelectionRange(newPos, newPos);
+        }
+      } catch {}
+      activeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
   };
 
   const layouts = {

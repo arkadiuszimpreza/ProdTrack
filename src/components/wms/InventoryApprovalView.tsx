@@ -350,7 +350,8 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
                       <div className="text-center flex flex-col items-center">
                           <p className="text-[9px] uppercase font-bold text-indigo-400 mb-0.5">Zliczone</p>
                           <input 
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             step="0.001"
                             value={editStr !== undefined ? editStr : b.draftQuantity}
                             onChange={(e) => setApprovalDraftEdits(prev => ({...prev, [b.id as string]: e.target.value}))}

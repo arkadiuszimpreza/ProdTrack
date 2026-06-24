@@ -450,7 +450,8 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
               <div>
                 <label className="block text-xs font-black text-stone-700 uppercase mb-2">Ilość do zwrotu</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   step="0.001"
                   min="0"
                   max={(returnModalItem.quantityWithdrawn - (returnModalItem.returnedQuantity || 0)).toFixed(3)}
@@ -471,7 +472,8 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
                     </div>
                     <div className="flex gap-2 h-12">
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         min="0"
                         placeholder="Ilość sztuk"
                         value={returnCalcPieces}
@@ -486,7 +488,8 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
                         <>
                           <div className="flex items-center justify-center px-2 text-stone-300 font-black text-xl">×</div>
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             step="0.001"
                             min="0"
                             placeholder="Długość (m)"

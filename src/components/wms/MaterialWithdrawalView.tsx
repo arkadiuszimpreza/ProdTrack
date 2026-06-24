@@ -243,7 +243,10 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
   }, [batches, selectedArticle, searchArticle]);
 
   const totalEnteredQty = useMemo(() => {
-    return Object.values(withdrawalQuantities).reduce((sum, val) => sum + (Number(val) || 0), 0);
+    return Object.values(withdrawalQuantities).reduce((sum, val) => {
+      const num = parseFloat(String(val).replace(',', '.'));
+      return sum + (isNaN(num) ? 0 : num);
+    }, 0);
   }, [withdrawalQuantities]);
 
   const applyCountToWithdrawal = (count: any, batch: InventoryBatch) => {
@@ -275,8 +278,9 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
 
       await runTransaction(db, async (transaction) => {
         const reads = [];
-        for (const [batchId, qtyToTake] of Object.entries(withdrawalQuantities)) {
-          if (qtyToTake <= 0) continue;
+        for (const [batchId, rawQtyToTake] of Object.entries(withdrawalQuantities)) {
+          const qtyToTake = parseFloat(String(rawQtyToTake).replace(',', '.'));
+          if (isNaN(qtyToTake) || qtyToTake <= 0) continue;
           const batchRef = doc(db, 'inventoryBatches', batchId);
           reads.push(transaction.get(batchRef).then(snap => ({ snap, qtyToTake, batchRef, batchId })));
         }
@@ -622,7 +626,8 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                             {guessPrefix(b.articleName || '') !== 'INNE' && guessPrefix(b.articleName || '') !== 'FA' && guessPrefix(b.articleName || '') !== 'SR' ? (
                               <div className="flex flex-1 gap-1 h-[44px]">
                                    <input
-                                     type="number"
+                                     type="text"
+                                     inputMode="decimal"
                                      min="0"
                                      placeholder="Szt"
                                      value={(calcValues[b.id as string] || { pieces: '', length: extractLengthFromDimensions(b.dimensions) }).pieces}
@@ -637,7 +642,8 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                                      <>
                                        <div className="flex items-center text-stone-400 text-xs font-bold px-1">x</div>
                                        <input
-                                         type="number"
+                                         type="text"
+                                         inputMode="decimal"
                                          step="0.001"
                                          min="0"
                                          placeholder="Dł(m)"
@@ -657,7 +663,8 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                               <div className="flex items-center justify-between gap-3 w-full">
                                   <span className="text-xs font-black text-stone-600 uppercase">Pobieram:</span>
                                   <input 
-                                    type="number" 
+                                    type="text" 
+                                    inputMode="decimal"
                                     step="0.001"
                                     min="0"
                                     max={b.numericQuantity}
@@ -671,17 +678,25 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                                           return copy;
                                         });
                                       } else {
-                                        const parsed = parseFloat(val) || 0;
+                                        let parsedVal = val.replace(',', '.');
+                                        const parsed = parseFloat(parsedVal);
                                         const maxQty = b.numericQuantity || 0;
-                                        const finalVal = Math.min(maxQty, parsed);
-                                        // Synchronizuj DOM dla klawiatury ekranowej
-                                        if (parsed > maxQty) {
-                                          e.target.value = finalVal.toString();
+                                        
+                                        if (!isNaN(parsed) && parsed > maxQty) {
+                                          // Limit to maxQty, but strip formatting only if exceeded
+                                          const limitedVal = maxQty.toString();
+                                          e.target.value = limitedVal;
+                                          setWithdrawalQuantities(prev => ({ 
+                                            ...prev, 
+                                            [b.id as string]: limitedVal
+                                          }));
+                                        } else {
+                                          // Keep exact string (e.g. "1." or "0,5") to allow typing decimals smoothly
+                                          setWithdrawalQuantities(prev => ({ 
+                                            ...prev, 
+                                            [b.id as string]: val
+                                          }));
                                         }
-                                        setWithdrawalQuantities(prev => ({ 
-                                          ...prev, 
-                                          [b.id as string]: finalVal
-                                        }));
                                       }
                                     }}
                                     className={cn(

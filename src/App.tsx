@@ -13,7 +13,7 @@ import { Package } from 'lucide-react';
 
 // --- Types & Utils ---
 import { 
-  ProductionOrder, Employee, UserProfile, ImportConflict 
+  ProductionOrder, Employee, UserProfile, ImportConflict, UserRole
 } from './types';
 import { handleFirestoreError, OperationType } from './utils/firestore-helpers';
 import { parseOrdersExcel, parseEmployeesExcel } from './utils/excelParser';
@@ -30,6 +30,8 @@ import { OperatorPanel } from './components/production/OperatorPanel';
 import { MainDashboard } from './components/common/MainDashboard';
 import { WMSOperatorDashboard } from './components/wms/WMSOperatorDashboard';
 import { VirtualKeyboard } from './components/common/VirtualKeyboard';
+import { KeyboardToggle } from './components/common/KeyboardToggle';
+import { useDeviceEnvironment } from './contexts/DeviceEnvironmentContext';
 
 // --- Utils ---
 import { cn } from './utils/firestore-helpers';
@@ -44,7 +46,7 @@ export default function App() {
   
   const currentRole = (overrideRole || profile?.role)?.toLowerCase() as UserRole | undefined;
   const isAdmin = currentRole === 'admin';
-  const showKeyboard = !isAdmin && currentRole !== 'magazynier';
+  const { customKeyboardEnabled: showKeyboard } = useDeviceEnvironment();
   const [wmsMode, setWmsMode] = useState(false);
 
   // 2. Dyspozytor Danych (Nasz wydzielony Hook do odczytu)
@@ -205,6 +207,7 @@ export default function App() {
     return (
       <>
         <RFIDLogin employees={employees} onLogin={(emp) => setCurrentOperator(emp)} onLogoutDevice={handleLogout} />
+        <KeyboardToggle />
         {showKeyboard && <VirtualKeyboard />}
       </>
     );
@@ -219,6 +222,7 @@ export default function App() {
              onLogout={() => { setWmsMode(false); setCurrentOperator(null); }}
              onBackToOperator={() => setWmsMode(false)}
            />
+           <KeyboardToggle />
            {showKeyboard && <VirtualKeyboard />}
          </>
        );
@@ -237,6 +241,7 @@ export default function App() {
           deviceRole={currentRole}
           onWmsClick={() => setWmsMode(true)}
         />
+        <KeyboardToggle />
         {showKeyboard && <VirtualKeyboard />}
       </>
     );
@@ -258,6 +263,7 @@ export default function App() {
         showImportModal={showImportModal} setShowImportModal={setShowImportModal} isImporting={isImporting} importSummary={importSummary} onClearSummary={() => setImportSummary(null)}
         overrideRole={overrideRole} setOverrideRole={setOverrideRole}
       />
+      <KeyboardToggle />
       {showKeyboard && <VirtualKeyboard />}
     </>
   );

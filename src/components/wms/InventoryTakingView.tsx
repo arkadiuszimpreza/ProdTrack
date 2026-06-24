@@ -844,7 +844,8 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                             {useCalc ? (
                                <div className="flex flex-1 gap-1 h-[44px]">
                                  <input
-                                   type="number"
+                                   type="text"
+                                   inputMode="decimal"
                                    min="0"
                                    placeholder="Szt"
                                    value={cv.pieces}
@@ -859,7 +860,8 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                                    <>
                                      <div className="flex items-center text-stone-400 text-xs font-bold px-1">x</div>
                                      <input
-                                       type="number"
+                                       type="text"
+                                       inputMode="decimal"
                                        step="0.001"
                                        min="0"
                                        placeholder="Dł(m)"
@@ -875,7 +877,8 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                                </div>
                             ) : (
                               <input 
-                                type="number" 
+                                type="text" 
+                                inputMode="decimal"
                                 step="0.001"
                                 min="0"
                                 placeholder={isDrafted ? "Dopisz ilość..." : "Wpisz stan..."}
@@ -1013,7 +1016,8 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                       <label className="block text-[10px] font-black uppercase text-stone-500 mb-1">Stan w systemie (Szt)</label>
                       <input 
                         required
-                        type="number" 
+                        type="text" 
+                        inputMode="decimal"
                         step="0.001"
                         min="0"
                         value={splitTransferPieces}
@@ -1026,7 +1030,8 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                     <div>
                       <label className="block text-[10px] font-black uppercase text-indigo-500 mb-1">Faktyczny spis (Szt)</label>
                       <input 
-                        type="number" 
+                        type="text" 
+                        inputMode="decimal"
                         step="0.001"
                         min="0"
                         value={splitDraftPieces}
@@ -1043,7 +1048,8 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                       <label className="block text-[10px] font-black uppercase text-stone-500 mb-1">Stan w systemie</label>
                       <input 
                         required
-                        type="number" 
+                        type="text" 
+                        inputMode="decimal"
                         step="0.001"
                         min="0"
                         value={splitTransferQty}
@@ -1056,7 +1062,8 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                     <div>
                       <label className="block text-[10px] font-black uppercase text-indigo-500 mb-1">Faktyczny spis</label>
                       <input 
-                        type="number" 
+                        type="text" 
+                        inputMode="decimal"
                         step="0.001"
                         min="0"
                         value={splitDraftQty}

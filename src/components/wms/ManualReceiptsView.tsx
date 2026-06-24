@@ -94,7 +94,11 @@ export function ManualReceiptsView() {
     setIsSubmitting(true);
     try {
       const oldQty = editingBatch.numericQuantity || 0;
-      const newQty = Number(editData.numericQuantity);
+      const newQty = parseFloat(String(editData.numericQuantity).replace(',', '.'));
+      if (isNaN(newQty)) {
+        setIsSubmitting(false);
+        return alert("Wprowadzono nieprawidłową ilość bazową.");
+      }
       const qtyDiff = newQty - oldQty;
 
       await runTransaction(db, async (transaction) => {
@@ -230,7 +234,7 @@ export function ManualReceiptsView() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-black uppercase text-stone-500">Ilość bazowa (do kalkulacji)</label>
-                  <input type="number" step="0.001" value={editData.numericQuantity} onChange={e => setEditData({...editData, numericQuantity: e.target.value})} className="w-full p-2 bg-stone-50 border border-stone-200 rounded-lg font-bold text-indigo-700" />
+                  <input type="text" inputMode="decimal" step="0.001" value={editData.numericQuantity} onChange={e => setEditData({...editData, numericQuantity: e.target.value})} className="w-full p-2 bg-stone-50 border border-stone-200 rounded-lg font-bold text-indigo-700" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-black uppercase text-stone-500">Tekst Ilości (Etykieta)</label>
@@ -246,7 +250,7 @@ export function ManualReceiptsView() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-black uppercase text-stone-500">Liczba etykiet</label>
-                  <input type="number" value={editData.labelsCount} onChange={e => setEditData({...editData, labelsCount: e.target.value})} className="w-full p-2 bg-stone-50 border border-stone-200 rounded-lg" />
+                  <input type="text" inputMode="numeric" value={editData.labelsCount} onChange={e => setEditData({...editData, labelsCount: e.target.value})} className="w-full p-2 bg-stone-50 border border-stone-200 rounded-lg" />
                 </div>
               </div>
 

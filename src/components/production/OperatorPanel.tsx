@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-import { ProductionOrder, Employee, WorkLog, WorkStation, WorkSession, OrderElement } from '../../types';
+import { ProductionOrder, Employee, WorkLog, WorkStation, WorkSession, OrderElement, UserRole } from '../../types';
 import { parseSearchTerms, matchesAllTerms } from '../../utils/search';
 
 // OTO NASI WYDZIELENI ASYSTENCI

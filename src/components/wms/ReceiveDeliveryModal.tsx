@@ -138,9 +138,10 @@ export function ReceiveDeliveryModal({ item, onClose, onSave }: Props) {
     const checked = type === 'checkbox' ? (e.target as HTMLInputElement).checked : undefined;
     
     if (name === 'numericQuantity') {
+      // Don't format the value immediately in state to allow typing "1." or "8,"
       setFormData(prev => ({ 
         ...prev, 
-        numericQuantity: Number(value),
+        numericQuantity: value as any,
         quantityString: `${value} ${item.unit}`
       }));
     } else if (name === 'labelsCount') {
@@ -185,6 +186,12 @@ export function ReceiveDeliveryModal({ item, onClose, onSave }: Props) {
         finalBatchNumber = finalBatchNumber.slice(0, -nextSequence.length) + generatedSeq;
       }
 
+      const parsedQty = parseFloat(String(formData.numericQuantity).replace(',', '.'));
+      if (isNaN(parsedQty) || parsedQty <= 0) {
+        setIsSubmitting(false);
+        return alert("Wprowadzono nieprawidłową ilość dostarczoną!");
+      }
+
       const batchData = {
         supplier: item.supplierName || 'Brak',
         deliveryDate: formData.deliveryDate,
@@ -196,8 +203,8 @@ export function ReceiveDeliveryModal({ item, onClose, onSave }: Props) {
         coefficient: formData.coefficient,
         dimensions: formData.dimensions,
         quantityString: formData.quantityString,
-        numericQuantity: Number(formData.numericQuantity),
-        initialQuantity: Number(formData.numericQuantity),
+        numericQuantity: parsedQty,
+        initialQuantity: parsedQty,
         withdrawnQuantity: 0,
         labelsCount: Number(formData.labelsCount) || 1,
         qcCard: formData.qcCard,
@@ -298,7 +305,7 @@ export function ReceiveDeliveryModal({ item, onClose, onSave }: Props) {
 
             <div className="space-y-1">
               <label className="text-[10px] font-black uppercase text-stone-500 tracking-wider">Fizycznie dostarczono (w liczbie)</label>
-              <input type="number" step="0.001" name="numericQuantity" required value={formData.numericQuantity} onChange={handleChange} className="w-full px-4 py-3 bg-white border-2 border-indigo-200 rounded-xl font-black text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input type="text" inputMode="decimal" step="0.001" name="numericQuantity" required value={formData.numericQuantity} onChange={handleChange} className="w-full px-4 py-3 bg-white border-2 border-indigo-200 rounded-xl font-black text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
             
             <div className="space-y-1">
@@ -313,7 +320,7 @@ export function ReceiveDeliveryModal({ item, onClose, onSave }: Props) {
 
             <div className="space-y-1">
               <label className="text-[10px] font-black uppercase text-indigo-600 tracking-wider">Ilość etykiet do wydruku</label>
-              <input type="number" min="1" name="labelsCount" required value={formData.labelsCount} onChange={handleChange} className="w-full px-4 py-3 bg-indigo-50/40 border-2 border-indigo-100 rounded-xl font-black text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input type="text" inputMode="numeric" min="1" name="labelsCount" required value={formData.labelsCount} onChange={handleChange} className="w-full px-4 py-3 bg-indigo-50/40 border-2 border-indigo-100 rounded-xl font-black text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
 
             <div className="col-span-2 flex gap-6 pt-2">
