@@ -25,6 +25,7 @@ import { OrderCard } from '../production/OrderCard';
 import { EmployeeManagementView } from '../administracja/EmployeeManagementView';
 import { WorkStationManagementView } from '../administracja/WorkStationManagementView';
 import { ReportsView } from '../management/ReportsView';
+import { ElementStatsView } from '../management/ElementStatsView';
 import { HistoryView } from '../production/HistoryView';
 import { ManualEntryForm } from '../management/ManualEntryForm';
 import { BulkManualEntryForm } from '../management/BulkManualEntryForm';
@@ -97,7 +98,7 @@ interface MainDashboardProps {
 }
 
 export function MainDashboard(props: MainDashboardProps) {
-  const [view, setView] = useState<'orders' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'stations' | 'docs' | 'live' | 'wms-inventory' | 'wms-deliveries' | 'wms-registry' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations'>('live'); 
+  const [view, setView] = useState<'orders' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'stations' | 'docs' | 'live' | 'element-stats' | 'wms-inventory' | 'wms-deliveries' | 'wms-registry' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations'>('live'); 
   const [searchTerm, setSearchTerm] = useState('');
   const [activeStatuses, setActiveStatuses] = useState<ProductionOrder['status'][]>(['pending', 'in-progress', 'reported', 'completed']);
   const [manualEntryVersion, setManualEntryVersion] = useState<1 | 2>(1);
@@ -405,6 +406,7 @@ export function MainDashboard(props: MainDashboardProps) {
                   <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2">Zarządzanie</h4>
                   <div className="space-y-1">
                     <SidebarItem active={view === 'reports'} onClick={() => { setView('reports'); setIsSidebarOpen(false); }} icon={<BarChart2 size={18} />} text="Raporty i Audyt" />
+                    <SidebarItem active={view === 'element-stats'} onClick={() => { setView('element-stats'); setIsSidebarOpen(false); }} icon={<Package size={18} />} text="Statystyki Elementów" />
                     <SidebarItem active={view === 'manual-entry'} onClick={() => { setView('manual-entry'); setIsSidebarOpen(false); }} icon={<PenTool size={18} />} text="Wpis ręczny" />
                   </div>
                 </div>
@@ -620,6 +622,8 @@ export function MainDashboard(props: MainDashboardProps) {
                     </div>
                   )}
                 </div>
+              ) : view === 'element-stats' && props.isAdmin ? (
+                <ElementStatsView orders={props.orders} employees={props.employees} />
               ) : view === 'reports' && props.isAdmin ? (
                 <ReportsView employees={props.employees} orders={props.orders} />
               ) : view === 'wms-inventory' && isWMSUser ? (
