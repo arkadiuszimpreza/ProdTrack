@@ -149,7 +149,8 @@ export function ManualReceiptsView() {
   const filtered = batches.filter(b => 
     (b.batchNumber || '').toLowerCase().includes((searchTerm || '').toLowerCase()) || 
     (b.articleName || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
-    (b.articleNumber || '').toLowerCase().includes((searchTerm || '').toLowerCase())
+    (b.articleNumber || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
+    (b.orderNumber || '').toLowerCase().includes((searchTerm || '').toLowerCase())
   );
 
   if (loading) return <div className="p-8 text-center text-stone-400 font-bold">Ładowanie ręcznych przyjęć...</div>;
@@ -180,38 +181,59 @@ export function ManualReceiptsView() {
               <th className="p-3 font-bold text-stone-500 w-32">Nr Wsadu</th>
               <th className="p-3 font-bold text-stone-500 w-32">Zamówienie</th>
               <th className="p-3 font-bold text-stone-500 w-32">Data Dostawy</th>
+              <th className="p-3 font-bold text-stone-500 w-32">Data Utworzenia</th>
               <th className="p-3 font-bold text-stone-500 w-24">Indeks</th>
               <th className="p-3 font-bold text-stone-500">Asortyment</th>
               <th className="p-3 font-bold text-stone-500 w-24">Wymiar</th>
-              <th className="p-3 font-bold text-right text-stone-500 w-24">Ilość</th>
+              <th className="p-3 font-bold text-right text-stone-500 w-32">Ilość</th>
               <th className="p-3 font-bold text-center text-stone-500 w-24">Akcje</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
             {filtered.length === 0 ? (
-              <tr><td colSpan={8} className="p-8 text-center text-stone-400">Brak zarejestrowanych ręcznych przyjęć.</td></tr>
+              <tr><td colSpan={9} className="p-8 text-center text-stone-400">Brak zarejestrowanych ręcznych przyjęć.</td></tr>
             ) : (
-              filtered.map(b => (
+              filtered.map(b => {
+                const isInUse = (b.withdrawnQuantity && b.withdrawnQuantity > 0) || (b.initialQuantity !== undefined && b.initialQuantity > b.numericQuantity);
+                return (
                 <tr key={b.id} className="hover:bg-stone-50 transition-colors group">
                   <td className="p-3 font-black text-indigo-700">{b.batchNumber}</td>
                   <td className="p-3 font-bold text-stone-600">{b.orderNumber || '-'}</td>
-                  <td className="p-3 text-stone-500 font-mono text-xs text-center">{b.deliveryDate ? b.deliveryDate : (b.createdAt?.toDate ? b.createdAt.toDate().toLocaleDateString() : '-')}</td>
+                  <td className="p-3 text-stone-500 font-mono text-xs text-center">{b.deliveryDate || '-'}</td>
+                  <td className="p-3 text-stone-500 font-mono text-xs text-center">
+                    {b.createdAt?.toDate ? (
+                      <div className="flex flex-col items-center justify-center gap-0.5">
+                        <span>{b.createdAt.toDate().toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                        <span className="text-[10px] text-stone-400 font-semibold">{b.createdAt.toDate().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    ) : '-'}
+                  </td>
                   <td className="p-3 font-mono text-xs text-stone-400">{b.articleNumber}</td>
                   <td className="p-3 font-semibold text-stone-700 truncate min-w-[200px]" title={b.articleName}>{b.articleName}</td>
                   <td className="p-3 text-stone-500">{b.dimensions || '-'}</td>
-                  <td className="p-3 text-right font-black text-stone-800">{b.numericQuantity}</td>
+                  <td className="p-3 text-right">
+                    {isInUse ? (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="text-xs text-stone-400 font-semibold line-through" title="Ilość początkowa">{b.initialQuantity !== undefined ? b.initialQuantity : (b.numericQuantity + (b.withdrawnQuantity || 0))}</span>
+                        <span className="font-black text-stone-800" title="Obecna ilość">{b.numericQuantity}</span>
+                        <span className="text-[9px] uppercase font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-full">W użyciu</span>
+                      </div>
+                    ) : (
+                      <span className="font-black text-stone-800">{b.numericQuantity}</span>
+                    )}
+                  </td>
                   <td className="p-3 text-center">
                     <div className="flex items-center justify-center gap-1">
-                      <button onClick={() => handleEditClick(b)} className="p-1.5 text-stone-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors border border-transparent hover:border-indigo-200" title="Edytuj">
+                      <button onClick={() => handleEditClick(b)} disabled={isInUse} className="p-1.5 text-stone-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors border border-transparent hover:border-indigo-200 disabled:opacity-30 disabled:cursor-not-allowed" title={isInUse ? "Wsad w użyciu - brak możliwości edycji" : "Edytuj"}>
                         <Edit2 size={16} />
                       </button>
-                      <button onClick={() => handleDelete(b)} className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-200" title="Usuń z bazy i cofnij WMS">
+                      <button onClick={() => handleDelete(b)} disabled={isInUse} className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-200 disabled:opacity-30 disabled:cursor-not-allowed" title={isInUse ? "Wsad w użyciu - brak możliwości usunięcia" : "Usuń z bazy i cofnij WMS"}>
                         <Trash2 size={16} />
                       </button>
                     </div>
                   </td>
                 </tr>
-              ))
+              );})
             )}
           </tbody>
         </table>

@@ -1,19 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, onSnapshot, orderBy, updateDoc, doc, getDocs, where, deleteDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Search, FileSpreadsheet, ArrowUpDown, Trash2 } from 'lucide-react';
+import { Search, FileSpreadsheet, ArrowUpDown, Trash2, Eye, EyeOff } from 'lucide-react';
 import { InventoryBatch, PurchaseOrderItem } from '../../types';
 import { cn } from '../../utils/firestore-helpers';
 import { exportToBarTenderExcel } from '../../utils/barTenderExporter';
 
-type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'FA' | 'SR';
+type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'PL' | 'FA' | 'SR';
 type SortKey = keyof InventoryBatch;
 
-export function InventoryYardView() {
+interface InventoryYardViewProps {
+  readOnly?: boolean;
+}
+
+export function InventoryYardView({ readOnly = false }: InventoryYardViewProps) {
   const [batches, setBatches] = useState<InventoryBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [materialFilter, setMaterialFilter] = useState<MaterialFilter>('ALL');
+  const [hideEmpty, setHideEmpty] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'deliveryDate', direction: 'desc' });
   
@@ -116,7 +121,8 @@ export function InventoryYardView() {
   const guessPrefix = (name: string): string => {
     const n = (name || '').toLowerCase();
     if (n.includes('rura')) return 'RU';
-    if (n.includes('blacha') || n.includes('płyta')) return 'BL';
+    if (n.includes('płyta') || n.includes('plyta')) return 'PL';
+  if (n.includes('blacha')) return 'BL';
     if (n.includes('profil') || n.includes('pręt') || n.includes('ceownik')) return 'PR';
     if (n.includes('farba') || n.includes('proszek')) return 'FA';
     if (n.includes('śruba') || n.includes('sruba') || n.includes('wkręt') || n.includes('nakrętka') || n.includes('podkładka')) return 'SR';
@@ -124,14 +130,16 @@ export function InventoryYardView() {
   };
 
   const getBatchType = (batchNumber: string, articleName: string) => {
+    const fromName = guessPrefix(articleName);
+    if (fromName === 'PL') return 'PL';
     const clean = batchNumber.trim();
     // Standard ERP format e.g. 24RU0001
     if (clean.length >= 4) {
       const pfx = clean.slice(2, 4).toUpperCase();
-      if (['RU', 'PR', 'BL', 'FA', 'SR'].includes(pfx)) return pfx;
+      if (['RU', 'PR', 'BL', 'PL', 'FA', 'SR'].includes(pfx)) return pfx;
     }
     // Fallback: search in batchNumber or articleName
-    const fromName = guessPrefix(articleName);
+    
     if (fromName !== 'INNE') return fromName;
     
     const upperBatch = clean.toUpperCase();
@@ -150,6 +158,9 @@ export function InventoryYardView() {
 
   const processedBatches = useMemo(() => {
     let result = [...batches];
+    if (hideEmpty) {
+      result = result.filter(b => b.numericQuantity !== 0);
+    }
     if (materialFilter !== 'ALL') result = result.filter(b => getBatchType(b.batchNumber, b.articleName || '') === materialFilter);
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase().trim();
@@ -169,7 +180,7 @@ export function InventoryYardView() {
       return 0;
     });
     return result;
-  }, [batches, searchTerm, materialFilter, sortConfig]);
+  }, [batches, searchTerm, materialFilter, sortConfig, hideEmpty]);
 
   const toggleSelection = (id: string) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const toggleAll = () => setSelectedIds(selectedIds.length === processedBatches.length && processedBatches.length > 0 ? [] : processedBatches.map(b => b.id as string));
@@ -232,7 +243,7 @@ export function InventoryYardView() {
 
   const getBlachaCalculatedMetrics = (b) => {
     const type = getBatchType(b.batchNumber, b.articleName || '');
-    if (type !== 'BL') return null;
+    if ((type !== 'BL' && type !== 'PL')) return null;
     const unit = getFallbackUnit(b);
     if ((unit || '').toLowerCase() !== 'kg') return null;
     if (!b.coefficient) return null;
@@ -270,7 +281,7 @@ export function InventoryYardView() {
         
         {/* Filtry */}
         <div className="flex bg-stone-100 p-1 rounded-lg border border-stone-200 shrink-0 select-none text-[11px] font-bold">
-          {['ALL', 'RU', 'PR', 'BL', 'FA', 'SR'].map(f => (
+          {['ALL', 'RU', 'PR', 'BL', 'PL', 'FA', 'SR'].map(f => (
             <button key={f} onClick={() => setMaterialFilter(f as MaterialFilter)} className={cn("px-2.5 py-1 rounded transition-all", materialFilter === f ? "bg-white text-indigo-700 shadow-sm" : "text-stone-500 hover:text-stone-800")}>
               {f === 'ALL' ? 'Wszystko' : f}
             </button>
@@ -279,17 +290,34 @@ export function InventoryYardView() {
         
         {/* Kontener na przyciski akcji */}
         <div className="flex items-center gap-2 w-full md:w-auto">
-          {/* PRZYCISK USUWANIA BILANSU */}
+          {/* PRZYCISK UKRYWANIA ZEROWYCH STANÓW */}
           <button 
-            onClick={handleClearOpeningBalance} 
-            disabled={isDeleting}
+            onClick={() => setHideEmpty(!hideEmpty)}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 text-white font-black text-[11px] rounded-lg shadow-sm transition-colors uppercase w-full md:w-auto justify-center",
-              isDeleting ? "bg-stone-400 cursor-not-allowed" : "bg-rose-600 hover:bg-rose-700"
+              "flex items-center gap-1.5 px-3 py-1.5 font-black text-[11px] rounded-lg shadow-sm transition-colors uppercase w-full md:w-auto justify-center border",
+              hideEmpty 
+                ? "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100" 
+                : "bg-white border-stone-200 text-stone-500 hover:bg-stone-50"
             )}
+            title={hideEmpty ? "Pokaż wsady ze stanem zerowym" : "Ukryj wsady ze stanem zerowym"}
           >
-            <Trash2 size={14} /> {isDeleting ? 'Usuwanie...' : 'Usuń B.O.'}
+            {hideEmpty ? <EyeOff size={14} /> : <Eye size={14} />}
+            {hideEmpty ? 'Ukryto puste' : 'Pokaż puste'}
           </button>
+
+          {/* PRZYCISK USUWANIA BILANSU */}
+          {!readOnly && (
+            <button 
+              onClick={handleClearOpeningBalance} 
+              disabled={isDeleting}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 text-white font-black text-[11px] rounded-lg shadow-sm transition-colors uppercase w-full md:w-auto justify-center",
+                isDeleting ? "bg-stone-400 cursor-not-allowed" : "bg-rose-600 hover:bg-rose-700"
+              )}
+            >
+              <Trash2 size={14} /> {isDeleting ? 'Usuwanie...' : 'Usuń B.O.'}
+            </button>
+          )}
 
           <button onClick={handleExportToBarTender} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[11px] rounded-lg shadow-sm transition-colors uppercase w-full md:w-auto justify-center">
             <FileSpreadsheet size={14} /> Eksport ({selectedIds.length})
@@ -346,10 +374,10 @@ export function InventoryYardView() {
                     
                     <td className="p-2 text-center text-stone-500 font-semibold cursor-pointer">{b.labelsCount || 0}</td>
                     <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" className="w-4 h-4 rounded border-stone-300 text-indigo-600 cursor-pointer" checked={!!b.qcCard} onChange={() => handleToggleAttribute(b.id as string, 'qcCard', !!b.qcCard)} />
+                      <input type="checkbox" className="w-4 h-4 rounded border-stone-300 text-indigo-600 cursor-pointer" checked={!!b.qcCard} disabled={readOnly} onChange={() => handleToggleAttribute(b.id as string, 'qcCard', !!b.qcCard)} />
                     </td>
                     <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" className="w-4 h-4 rounded border-stone-300 text-indigo-600 cursor-pointer" checked={!!b.certificate} onChange={() => handleToggleAttribute(b.id as string, 'certificate', !!b.certificate)} />
+                      <input type="checkbox" className="w-4 h-4 rounded border-stone-300 text-indigo-600 cursor-pointer" checked={!!b.certificate} disabled={readOnly} onChange={() => handleToggleAttribute(b.id as string, 'certificate', !!b.certificate)} />
                     </td>
 
                     <td className="p-2 text-right font-bold text-stone-500 cursor-pointer">{initialQty}</td>
@@ -373,7 +401,16 @@ export function InventoryYardView() {
                          })()}
                       </div>
                     </td>
-                    <td className="p-2 text-center text-stone-700 font-bold bg-stone-50/50">{b.unit || getFallbackUnit(b) || '-'}</td>
+                    <td className="p-2 text-center bg-stone-50/50">
+                      <div className="flex flex-col items-center justify-center">
+                        {b.coefficient && (
+                          <span className="text-[10px] text-emerald-600 font-bold leading-none mb-1">
+                            {b.coefficient}
+                          </span>
+                        )}
+                        <span className="text-stone-700 font-bold leading-none">{b.unit || getFallbackUnit(b) || '-'}</span>
+                      </div>
+                    </td>
                     <td className="p-2 text-center text-stone-500 font-semibold cursor-pointer">{b.deliveryDate}</td>
                   </tr>
                 );

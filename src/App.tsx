@@ -31,12 +31,19 @@ import { MainDashboard } from './components/common/MainDashboard';
 import { WMSOperatorDashboard } from './components/wms/WMSOperatorDashboard';
 import { VirtualKeyboard } from './components/common/VirtualKeyboard';
 import { KeyboardToggle } from './components/common/KeyboardToggle';
+import { OperatorPanelTablice } from './components/production/OperatorPanelTablice';
 import { useDeviceEnvironment } from './contexts/DeviceEnvironmentContext';
 
 // --- Utils ---
 import { cn } from './utils/firestore-helpers';
 
+import { TVMonitorView } from './components/production/TVMonitorView';
+
 export default function App() {
+  const [isTvMode, setIsTvMode] = useState(
+    window.location.pathname === '/tv' || window.location.hash === '#tv'
+  );
+
   // 1. Podstawowe stany autoryzacji
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -48,6 +55,7 @@ export default function App() {
   const isAdmin = currentRole === 'admin';
   const { customKeyboardEnabled: showKeyboard } = useDeviceEnvironment();
   const [wmsMode, setWmsMode] = useState(false);
+  const [tabliceMode, setTabliceMode] = useState(false);
 
   // 2. Dyspozytor Danych (Nasz wydzielony Hook do odczytu)
   const { 
@@ -186,6 +194,10 @@ export default function App() {
   // Wyciągnięcie nazwy zalogowanego użytkownika (dla panelu WMS)
   const loggedInName = profile?.displayName || user?.displayName || user?.email?.split('@')[0] || 'Nieznany Pracownik';
 
+  if ((isTvMode || profile?.role === 'tv-monitor') && !loading && user) {
+    return <TVMonitorView activeLogs={allActiveLogs} orders={orders} />;
+  }
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-stone-50">
       <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full" />
@@ -203,7 +215,7 @@ export default function App() {
     </div>
   );
 
-  if ((currentRole === 'operator' || currentRole === 'operator-wms') && !currentOperator) {
+  if ((currentRole === 'operator' || currentRole === 'operator-wms' || currentRole === 'operator-tablice') && !currentOperator) {
     return (
       <>
         <RFIDLogin employees={employees} onLogin={(emp) => setCurrentOperator(emp)} onLogoutDevice={handleLogout} />
@@ -213,7 +225,7 @@ export default function App() {
     );
   }
 
-  if (currentOperator && (currentRole === 'operator' || currentRole === 'operator-wms')) {
+  if (currentOperator && (currentRole === 'operator' || currentRole === 'operator-wms' || currentRole === 'operator-tablice')) {
     if (wmsMode && currentRole === 'operator-wms') {
        return (
          <>
@@ -221,6 +233,22 @@ export default function App() {
              user={user} profile={profile} currentOperator={currentOperator}
              onLogout={() => { setWmsMode(false); setCurrentOperator(null); }}
              onBackToOperator={() => setWmsMode(false)}
+           />
+           <KeyboardToggle />
+           {showKeyboard && <VirtualKeyboard />}
+         </>
+       );
+    }
+
+    if (tabliceMode || currentRole === 'operator-tablice') {
+       return (
+         <>
+           <OperatorPanelTablice 
+             operator={currentOperator} orders={orders} activeLog={activeLog} 
+             activeSessions={activeSessions}
+             onLogout={() => { setTabliceMode(false); setCurrentOperator(null); }}
+             onStartWork={startWork} onStopWork={stopWork}
+             onBackToOperator={currentRole !== 'operator-tablice' ? () => setTabliceMode(false) : undefined}
            />
            <KeyboardToggle />
            {showKeyboard && <VirtualKeyboard />}
@@ -240,6 +268,7 @@ export default function App() {
           onJoinTeam={joinTeam} 
           deviceRole={currentRole}
           onWmsClick={() => setWmsMode(true)}
+          onTabliceClick={() => setTabliceMode(true)}
         />
         <KeyboardToggle />
         {showKeyboard && <VirtualKeyboard />}

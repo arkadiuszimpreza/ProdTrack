@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { X, PackagePlus, Save, Wand2 } from 'lucide-react';
 import { format } from 'date-fns';
-import { collection, doc, runTransaction, getDoc } from 'firebase/firestore';
+import { collection, doc, runTransaction, getDoc, query, where, limit, getDocs, orderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
 
 // Inteligentny półautomat do zgadywania prefiksu
@@ -10,7 +10,8 @@ const guessPrefix = (name: string): string => {
   if (!name) return 'INNE';
   const n = name.toLowerCase();
   if (n.includes('rura')) return 'RU';
-  if (n.includes('blacha') || n.includes('płyta')) return 'BL';
+  if (n.includes('płyta') || n.includes('plyta')) return 'PL';
+  if (n.includes('blacha')) return 'BL';
   if (n.includes('profil') || n.includes('pręt') || n.includes('ceownik')) return 'PR';
   if (n.includes('farba') || n.includes('proszek')) return 'FA';
   if (n.includes('śruba') || n.includes('sruba') || n.includes('wkręt') || n.includes('nakrętka') || n.includes('podkładka')) return 'SR';
@@ -89,7 +90,7 @@ export function ReceiveDeliveryModal({ item, onClose, onSave }: Props) {
         const nextVal = String(currentVal + 1).padStart(3, '0');
         setNextSequence(nextVal);
         
-        if (materialType !== 'BL') {
+        if ((materialType !== 'BL' && materialType !== 'PL')) {
           setFormData(prev => ({ ...prev, batchNumber: `${basePrefix}${nextVal}` }));
         }
       } catch (e) {
@@ -101,9 +102,34 @@ export function ReceiveDeliveryModal({ item, onClose, onSave }: Props) {
     fetchNextSeq();
   }, [basePrefix, materialType]);
 
+  useEffect(() => {
+    const fetchCoefficient = async () => {
+      if (!item.articleNumber) return;
+      try {
+        const q = query(
+          collection(db, 'inventoryBatches'),
+          where('articleNumber', '==', item.articleNumber),
+          orderBy('createdAt', 'desc'),
+          limit(10)
+        );
+        const snap = await getDocs(q);
+        for (const docSnap of snap.docs) {
+          const data = docSnap.data();
+          if (data.coefficient && data.coefficient.trim() !== '') {
+            setFormData(prev => ({ ...prev, coefficient: data.coefficient }));
+            break;
+          }
+        }
+      } catch (e) {
+        console.error('Error fetching coefficient:', e);
+      }
+    };
+    fetchCoefficient();
+  }, [item.articleNumber]);
+
   // 2. MAGICZNA RÓŻDŻKA (Inteligentny Generator Wsadu)
   const handleAutoGenerateBatch = () => {
-    if (materialType === 'BL') {
+    if ((materialType === 'BL' || materialType === 'PL')) {
       // LOGIKA BLACH
       const dimMatch = formData.dimensions.match(/(\d+)\s*[xX*]\s*(\d+)/);
       if (dimMatch) {

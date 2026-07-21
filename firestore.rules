@@ -63,6 +63,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
+    match /{document=**} {
+      allow read, write: if isAuthenticated();
+    }
+    
     // Helper Functions
     function isAuthenticated() {
       return request.auth != null;
@@ -99,7 +103,7 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.displayName is string && data.displayName.size() > 0 &&
-             data.email is string && data.role in ['admin', 'worker', 'operator'];
+             data.email is string && data.role in ['admin', 'worker', 'operator', 'magazynier', 'operator-wms', 'tv-monitor', 'podglad'];
     }
 
     function isValidEmployee(data) {
@@ -124,6 +128,58 @@ service cloud.firestore {
 
     // Rules
     
+    match /expectedDeliveries/{document} {
+      allow read, write: if isAuthenticated();
+    }
+    
+    match /inventoryBatches/{document} {
+      allow read, write: if isAuthenticated();
+    }
+    
+    match /materialWithdrawals/{document} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /materialReservations/{document} {
+      allow read, write: if isAuthenticated();
+    }
+    
+    match /inventoryTakes/{document} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /inventoryCounts/{document} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /inventoryAdjustments/{document} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /inventoryArticles/{document} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /techOperations/{document} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /techProcesses/{document} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /wmsReceiptsBackup/{document} {
+      allow read, write: if isAuthenticated();
+    }
+    
+    match /system_configs/{document} {
+      allow read, write: if isAuthenticated();
+    }
+    
+    match /systemSettings/{document} {
+      allow read, write: if isAuthenticated();
+    }
+
     match /users/{userId} {
       allow read: if isAuthenticated();
       allow create, update: if isAdmin() || isOwner(userId);

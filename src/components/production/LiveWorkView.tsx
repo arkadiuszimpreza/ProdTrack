@@ -10,6 +10,7 @@ interface LiveWorkViewProps {
   activeLogs: WorkLog[];
   orders: ProductionOrder[];
   onForceStop: (log: WorkLog, endTime: Date, quantity: number) => Promise<void>;
+  readOnly?: boolean;
 }
 
 const HOURLY_RATE = 65.00; 
@@ -19,7 +20,7 @@ const toDateTimeLocal = (date: Date) => {
   return format(date, "yyyy-MM-dd'T'HH:mm");
 };
 
-export function LiveWorkView({ activeLogs, orders, onForceStop }: LiveWorkViewProps) {
+export function LiveWorkView({ activeLogs, orders, onForceStop, readOnly = false }: LiveWorkViewProps) {
   const [now, setNow] = useState(new Date());
   const [groupBy, setGroupBy] = useState<'order' | 'employee'>('employee'); 
 
@@ -203,10 +204,14 @@ export function LiveWorkView({ activeLogs, orders, onForceStop }: LiveWorkViewPr
                   const totalSeconds = elGroup.logs.reduce((sum, log) => sum + getLiveSeconds(log.startTime), 0);
                   const liveCost = (totalSeconds / 3600) * HOURLY_RATE;
                   
-                  // ZMODYFIKOWANO: Pobieranie wagi całkowitej lub wagi elementu
-                  const weight = elId === 'whole_order' 
+                  // ZMODYFIKOWANO: Pobieranie wagi całkowitej lub wagi elementu i mnożenie przez sztuki dla całego zlecenia
+                  const baseWeight = elId === 'whole_order' 
                     ? (group.order?.totalWeight || 0) 
                     : (elGroup.element?.weight || 0);
+                  
+                  const weight = elId === 'whole_order'
+                    ? baseWeight * Math.max(1, group.order?.targetQuantity || 1)
+                    : baseWeight;
                     
                   const costPerKg = weight > 0 ? liveCost / weight : null;
 
@@ -260,9 +265,11 @@ export function LiveWorkView({ activeLogs, orders, onForceStop }: LiveWorkViewPr
                                 {formatTimeStr(getLiveSeconds(log.startTime))}
                               </div>
                               {/* ADMIN OVERRIDE BUTTON */}
-                              <button onClick={() => handleOpenStopModal(log)} className="text-stone-400 hover:text-red-600 bg-white border border-stone-200 hover:border-red-200 hover:bg-red-50 p-1.5 rounded-lg transition-all" title="Wymuś zatrzymanie">
-                                <StopCircle size={18} />
-                              </button>
+                              {!readOnly && (
+                                <button onClick={() => handleOpenStopModal(log)} className="text-stone-400 hover:text-red-600 bg-white border border-stone-200 hover:border-red-200 hover:bg-red-50 p-1.5 rounded-lg transition-all" title="Wymuś zatrzymanie">
+                                  <StopCircle size={18} />
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -284,9 +291,11 @@ export function LiveWorkView({ activeLogs, orders, onForceStop }: LiveWorkViewPr
                 <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
                 
                 {/* ADMIN OVERRIDE BUTTON (Absolute top right) */}
-                <button onClick={() => handleOpenStopModal(log)} className="absolute top-4 right-4 text-stone-300 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100" title="Wymuś zatrzymanie">
-                  <StopCircle size={20} />
-                </button>
+                {!readOnly && (
+                  <button onClick={() => handleOpenStopModal(log)} className="absolute top-4 right-4 text-stone-300 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100" title="Wymuś zatrzymanie">
+                    <StopCircle size={20} />
+                  </button>
+                )}
 
                 <div className="flex justify-between items-start mt-2">
                   <div className="flex items-center gap-3">

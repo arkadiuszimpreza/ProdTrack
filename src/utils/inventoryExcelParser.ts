@@ -96,7 +96,16 @@ export const parseZakupyInfo = async (file: File): Promise<PurchaseOrderItem[]> 
           }
 
           // ROZSZERZONE ŁAPANIE CENY (Złapie "Cena (wal.podst.)", "Cena jedn.", itp.)
-          const unitPrice = safeParseNumber(getVal(row, ['Cena (wal.podst.)', 'Cena', 'Cena jedn.', 'Cena netto', 'Wartość']));
+          const rawUnitPrice = safeParseNumber(getVal(row, ['Cena (wal.podst.)', 'Cena', 'Cena jedn.', 'Cena netto', 'Wartość']));
+          const priceUnitCode = String(getVal(row, ['jc', 'pe', 'jednostka cenowa', 'jc.']) || '1').trim();
+          let priceUnitMultiplier = 1;
+          if (priceUnitCode === '2') priceUnitMultiplier = 10;
+          else if (priceUnitCode === '3') priceUnitMultiplier = 100;
+          else if (priceUnitCode === '4') priceUnitMultiplier = 1000;
+          else if (priceUnitCode === '10' || priceUnitCode === '100' || priceUnitCode === '1000') priceUnitMultiplier = Number(priceUnitCode);
+          else priceUnitMultiplier = safeParseNumber(priceUnitCode) > 0 ? safeParseNumber(priceUnitCode) : 1;
+          
+          const unitPrice = priceUnitMultiplier > 0 ? Number((rawUnitPrice / priceUnitMultiplier).toFixed(6)) : rawUnitPrice;
           
           const procesNr = String(getVal(row, ['Proces-nr']) || '').trim();
           const pozNr = String(getVal(row, ['Poz.-nr', 'Poz-nr', 'Poz']) || '').trim();
@@ -202,6 +211,7 @@ export const parseInventoryBalances = async (file: File): Promise<any[]> => {
           const n = name.toLowerCase();
           if (n.includes('rura')) return 'RU';
           if (n.includes('profil') || n.includes('kątownik') || n.includes('ceownik')) return 'PR';
+          if (n.includes('płyta') || n.includes('plyta')) return 'PL';
           if (n.includes('blacha')) return 'BL';
           if (n.includes('farba')) return 'FA';
           if (n.includes('śruba') || n.includes('sruba') || n.includes('wkręt') || n.includes('nakrętka') || n.includes('podkładka')) return 'SR';
@@ -230,7 +240,7 @@ export const parseInventoryBalances = async (file: File): Promise<any[]> => {
             initialQuantity: rawQty,
             unit: finalUnit, // Przypisujemy inteligentnie wybraną jednostkę
             quantityString: `${rawQty} ${finalUnit}`.trim(),
-            unitPrice: safeParseNumber(getVal(row, ['preis', 'cena'])),
+            unitPrice: safeParseNumber(getVal(row, ['jc', 'pe', 'jednostka cenowa', 'jc.'])) > 0 ? Number((safeParseNumber(getVal(row, ['preis', 'cena'])) / safeParseNumber(getVal(row, ['jc', 'pe', 'jednostka cenowa', 'jc.']))).toFixed(6)) : safeParseNumber(getVal(row, ['preis', 'cena'])),
             batchNumber: `${pfx}INW2026-${String(rowIdx++).padStart(4, '0')}`, 
             deliveryDate: '2026-01-01',
             supplier: 'INWENTARYZACJA BO'

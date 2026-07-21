@@ -27,64 +27,13 @@ interface ContractFile {
   createdAt?: any;
 }
 
-function parseMaterialDimensions(name: string) {
-  const normName = name.toLowerCase();
-  
-  const profileMatch = normName.match(/profil.*?(\d+)\s*(?:x|×)\s*(\d+)\s*(?:x|×)\s*([\d,.]+)/);
-  if (profileMatch) {
-    let w = parseInt(profileMatch[1], 10);
-    let h = parseInt(profileMatch[2], 10);
-    if (h > w) { const t = w; w = h; h = t; }
-    
-    return {
-      parsedType: 'profil',
-      dim1: w.toString().padStart(3, '0'),
-      dim2: h.toString().padStart(3, '0'), 
-      thickness: parseFloat(profileMatch[3].replace(',', '.')) || 0,
-      rawDim1: w.toString(),
-      rawDim2: h.toString(),
-      rawThickness: profileMatch[3]
-    };
-  }
+import { parseMaterialDimensions } from "../../utils/materialUtils";
 
-  const pipeMatch2 = normName.match(/rura.*?fi\s*([\d,.]+)\s*(?:mm)?\s*(?:x|×)\s*([\d,.]+)/);
-  if (pipeMatch2) {
-    return {
-      parsedType: 'rura',
-      dim1: pipeMatch2[1].padStart(5, '0'), // padding for sorting fi 020,0
-      dim2: '',
-      thickness: parseFloat(pipeMatch2[2].replace(',', '.')) || 0,
-      rawDim1: 'fi ' + pipeMatch2[1],
-      rawDim2: '',
-      rawThickness: pipeMatch2[2]
-    }
-  }
-
-  const pipeMatch1 = name.match(/rura.*?([\d,.]+(?:\s*")?)\s*(?:x|×)\s*([\d,.]+)/i);
-  if (pipeMatch1) {
-    return {
-      parsedType: 'rura',
-      dim1: pipeMatch1[1].trim().padStart(5, '0'),
-      dim2: '',
-      thickness: parseFloat(pipeMatch1[2].replace(',', '.')) || 0,
-      rawDim1: pipeMatch1[1].trim(),
-      rawDim2: '',
-      rawThickness: pipeMatch1[2]
-    }
-  }
-
-  return {
-    parsedType: 'inne',
-    dim1: 'zzz',
-    dim2: 'zzz',
-    thickness: 0,
-    rawDim1: '-',
-    rawDim2: '-',
-    rawThickness: '-'
-  };
+interface MaterialReservationsViewProps {
+  readOnly?: boolean;
 }
 
-export function MaterialReservationsView() {
+export function MaterialReservationsView({ readOnly = false }: MaterialReservationsViewProps) {
   const [contracts, setContracts] = useState<ContractFile[]>([]);
   const [batches, setBatches] = useState<InventoryBatch[]>([]);
   const [articles, setArticles] = useState<InventoryArticle[]>([]);
@@ -477,17 +426,19 @@ export function MaterialReservationsView() {
             <Download size={20} />
             Eksportuj
           </button>
-          <label className="relative flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold cursor-pointer hover:bg-indigo-700 transition-all shadow-md active:scale-95">
-            <Upload size={20} />
-            Importuj Pliki
-            <input 
-              type="file" 
-              accept=".xls,.xlsx" 
-              multiple 
-              onChange={handleFileUpload}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-          </label>
+          {!readOnly && (
+            <label className="relative flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold cursor-pointer hover:bg-indigo-700 transition-all shadow-md active:scale-95">
+              <Upload size={20} />
+              Importuj Pliki
+              <input 
+                type="file" 
+                accept=".xls,.xlsx" 
+                multiple 
+                onChange={handleFileUpload}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+            </label>
+          )}
         </div>
       </div>
 
@@ -517,12 +468,14 @@ export function MaterialReservationsView() {
                       >
                         {contract.isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                       </button>
-                      <button 
-                        onClick={() => removeContract(contract.id)}
-                        className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                      {!readOnly && (
+                        <button 
+                          onClick={() => removeContract(contract.id)}
+                          className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -534,7 +487,8 @@ export function MaterialReservationsView() {
                             type="checkbox" 
                             checked={cons.enabled}
                             onChange={() => toggleConstruction(contract.id, cons.name)}
-                            className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                            disabled={readOnly}
+                            className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                           <span className="text-xs font-semibold text-stone-700 truncate" title={cons.name}>{cons.name}</span>
                         </label>

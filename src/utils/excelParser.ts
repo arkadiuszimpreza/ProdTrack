@@ -10,7 +10,7 @@ const determineAssortmentCategory = (productName: string, articleNumber: string)
   const index = articleNumber.toLowerCase();
 
   // 1. ZBROJENIA
-  if (name.includes('zbrojenie') || name.includes('zbrojenia') || index.includes('zbr')) {
+  if (name.includes('zbrojenie') || name.includes('zbrojenia') || index.includes('ezb')) {
     return 'Zbrojenia';
   }
   // 2. BARIERY
@@ -20,11 +20,18 @@ const determineAssortmentCategory = (productName: string, articleNumber: string)
     name.includes('poręcz') || 
     name.includes('podpórka') || 
     name.includes('szyna') || 
+    name.includes('balustrada') || 
     name.includes('gniazdo')) {
     return 'Bariery';
   }
   // 3. ASTOR
-  if (name.includes('astor') || name.includes('rama') || name.includes('słupek ozdobny')) {
+  if (
+  name.includes('astor') || 
+  name.includes('vincent') || 
+  name.includes('rama') || 
+  name.includes('słupek ozdobny') || 
+  name.includes('park') || 
+  name.includes('bydgoski')) {
     return 'Astor';
   }
   // 4. KONSTRUKCJE
@@ -35,8 +42,8 @@ const determineAssortmentCategory = (productName: string, articleNumber: string)
     name.includes('wysięgnik') ||
     name.includes('maszt') || 
     name.includes('spaw') || 
-    name.includes('żuraw')
-  ) {
+    name.includes('podest') || 
+    name.includes('żuraw')) {
     return 'Konstrukcje';
   }
 

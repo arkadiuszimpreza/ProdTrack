@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Package, Clock, Search, X, Trash2, Upload, List, AlertTriangle, 
-  CheckCircle2, LogOut, Info, Settings, LayoutList, Boxes, History, 
+  CheckCircle2, LogOut, Info, Settings, Settings2, LayoutList, Boxes, History, 
   Activity, BarChart2, PenTool, Users, Briefcase, FileText, Menu, ChevronRight,
-  Truck, BookOpen, PackageMinus, ClipboardCheck, PackagePlus, RotateCcw, Archive, FileSpreadsheet
+  Truck, BookOpen, PackageMinus, ClipboardCheck, PackagePlus, RotateCcw, Archive, FileSpreadsheet, Weight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInSeconds } from 'date-fns';
@@ -29,6 +29,7 @@ import { ElementStatsView } from '../management/ElementStatsView';
 import { HistoryView } from '../production/HistoryView';
 import { ManualEntryForm } from '../management/ManualEntryForm';
 import { BulkManualEntryForm } from '../management/BulkManualEntryForm';
+import { EmployeeTimelineView } from '../management/EmployeeTimelineView';
 import { ImportResolutionModal } from '../wms/ImportResolutionModal';
 import { OrderElementEditor } from '../production/OrderElementEditor';
 import { ElementSelectionModal } from './ElementSelectionModal';
@@ -52,6 +53,11 @@ import { SequenceMigration } from '../wms/SequenceMigration';
 import { DraftMigration } from '../wms/DraftMigration';
 import { InventoryZeroingView } from '../wms/InventoryZeroingView';
 import { MaterialReservationsView } from '../wms/MaterialReservationsView';
+import { WeightCoefficientsView } from '../wms/WeightCoefficientsView';
+import { TechOperationsView } from '../administracja/TechOperationsView';
+import { TechProcessesView } from '../administracja/TechProcessesView';
+import { MissingWeightsView } from '../production/MissingWeightsView';
+import { BoardDrawingsManager } from '../administracja/BoardDrawingsManager';
 
 interface MainDashboardProps {
   user: any;
@@ -98,7 +104,7 @@ interface MainDashboardProps {
 }
 
 export function MainDashboard(props: MainDashboardProps) {
-  const [view, setView] = useState<'orders' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'stations' | 'docs' | 'live' | 'element-stats' | 'wms-inventory' | 'wms-deliveries' | 'wms-registry' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations'>('live'); 
+  const [view, setView] = useState<'orders' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'timeline' | 'stations' | 'docs' | 'live' | 'element-stats' | 'wms-inventory' | 'wms-deliveries' | 'wms-registry' | 'wms-coeffs' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations' | 'tech-operations' | 'tech-processes' | 'missing-weights' | 'tech-board-drawings'>('live');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeStatuses, setActiveStatuses] = useState<ProductionOrder['status'][]>(['pending', 'in-progress', 'reported', 'completed']);
   const [manualEntryVersion, setManualEntryVersion] = useState<1 | 2>(1);
@@ -120,7 +126,11 @@ export function MainDashboard(props: MainDashboardProps) {
       if (!view.startsWith('wms-')) {
         setView('wms-deliveries');
       }
-    } else if (role !== 'ADMIN' && view !== 'orders' && view !== 'history') {
+    } else if (role === 'PODGLAD') {
+      if (!['live', 'wms-inventory', 'wms-reservations', 'timeline'].includes(view)) {
+        setView('live');
+      }
+    } else if (role !== 'ADMIN' && role !== 'PODGLAD' && view !== 'orders' && view !== 'history') {
       // Pracownicy see only orders or history
       setView('orders');
     }
@@ -143,23 +153,11 @@ export function MainDashboard(props: MainDashboardProps) {
     const term = searchTerm.trim();
     
     if (term.length === 6) {
-      // Szukamy TWARDO w surowych danych
-      const existsInRAM = props.orders.some(o => 
-        (o.orderNumber || '').trim() === term || 
-        (o.erpOrderNumber || '').trim() === term ||
-        (o.projectNumber || '').trim() === term
-      );
-
-      // Pobieramy z chmury TYLKO jeśli zlecenia fizycznie nie ma w aplikacji
-      if (!existsInRAM) {
-        searchArchiveInFirebase(term);
-      } else {
-        setArchivedOrders([]); 
-      }
+      searchArchiveInFirebase(term);
     } else {
       setArchivedOrders([]); 
     }
-  }, [searchTerm, props.orders]); 
+  }, [searchTerm]); 
 
   const searchArchiveInFirebase = async (term: string) => {
     setIsSearchingArchive(true);
@@ -320,6 +318,7 @@ export function MainDashboard(props: MainDashboardProps) {
   const currentUser = props.profile?.displayName || props.user?.displayName || props.user?.email?.split('@')[0] || 'Zalogowany Pracownik';
   const role = (props.overrideRole || props.profile?.role)?.toUpperCase() as string;
   const isWMSUser = props.isAdmin || role === 'MAGAZYNIER';
+  const isPodglad = role === 'PODGLAD';
 
   return (
     <ErrorBoundary>
@@ -363,20 +362,36 @@ export function MainDashboard(props: MainDashboardProps) {
                   <option value="worker">WORKER</option>
                   <option value="operator">OPERATOR</option>
                   <option value="operator-wms">OPERATOR WMS</option>
+                  <option value="operator-tablice">OPERATOR TABLICE</option>
                   <option value="magazynier">MAGAZYNIER</option>
+                  <option value="tv-monitor">TV MONITOR</option>
+                  <option value="podglad">PODGLĄD</option>
                 </select>
               </div>
             )}
           </div>
 
           <div className="flex-1 overflow-y-auto py-4 px-3 space-y-6 custom-scrollbar">
-            {role !== 'MAGAZYNIER' && (
+            {role !== 'MAGAZYNIER' && !isPodglad && (
               <div>
                 <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2">Produkcja</h4>
                 <div className="space-y-1">
                   <SidebarItem active={view === 'live'} onClick={() => { setView('live'); setIsSidebarOpen(false); }} icon={<Activity size={18} />} text="Live Hala" right={<span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>} />
                   <SidebarItem active={view === 'orders'} onClick={() => { setView('orders'); setIsSidebarOpen(false); }} icon={<LayoutList size={18} />} text="Bieżące Zlecenia" />
+                  <SidebarItem active={view === 'missing-weights'} onClick={() => { setView('missing-weights'); setIsSidebarOpen(false); }} icon={<Weight size={18} />} text="Uzupełnianie Wag" />
                   <SidebarItem active={view === 'history'} onClick={() => { setView('history'); setIsSidebarOpen(false); }} icon={<History size={18} />} text="Historia Zleceń" />
+                </div>
+              </div>
+            )}
+
+            {isPodglad && (
+              <div>
+                <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2">Podgląd</h4>
+                <div className="space-y-1">
+                  <SidebarItem active={view === 'live'} onClick={() => { setView('live'); setIsSidebarOpen(false); }} icon={<Activity size={18} />} text="Live Hala" right={<span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>} />
+                  <SidebarItem active={view === 'wms-inventory'} onClick={() => { setView('wms-inventory'); setIsSidebarOpen(false); }} icon={<Package size={18} />} text="Stan Placu" />
+                  <SidebarItem active={view === 'wms-reservations'} onClick={() => { setView('wms-reservations'); setIsSidebarOpen(false); }} icon={<FileSpreadsheet size={18} />} text="Rezerwacje Materiałowe" />
+                  <SidebarItem active={view === 'timeline'} onClick={() => { setView('timeline'); setIsSidebarOpen(false); }} icon={<Clock size={18} />} text="Oś czasu pracowników" />
                 </div>
               </div>
             )}
@@ -389,6 +404,7 @@ export function MainDashboard(props: MainDashboardProps) {
                   <SidebarItem active={view === 'wms-reservations'} onClick={() => { setView('wms-reservations'); setIsSidebarOpen(false); }} icon={<FileSpreadsheet size={18} />} text="Rezerwacje Materiałowe" />
                   <SidebarItem active={view === 'wms-deliveries'} onClick={() => { setView('wms-deliveries'); setIsSidebarOpen(false); }} icon={<Truck size={18} />} text="Zakupy (Oczekujące)" />
                   <SidebarItem active={view === 'wms-registry'} onClick={() => { setView('wms-registry'); setIsSidebarOpen(false); }} icon={<BookOpen size={18} />} text="Katalog Artykułów" />
+                  <SidebarItem active={view === 'wms-coeffs'} onClick={() => { setView('wms-coeffs'); setIsSidebarOpen(false); }} icon={<Settings2 size={18} />} text="Przeliczniki Stali" />
                   <SidebarItem active={view === 'wms-wip'} onClick={() => { setView('wms-wip'); setIsSidebarOpen(false); }} icon={<PackageMinus size={18} />} text="Pobranie na Produkcję" />
                   <SidebarItem active={view === 'wms-returns'} onClick={() => { setView('wms-returns'); setIsSidebarOpen(false); }} icon={<RotateCcw size={18} />} text="Zwrot na Magazyn" />
                   <SidebarItem active={view === 'wms-taking'} onClick={() => { setView('wms-taking'); setIsSidebarOpen(false); }} icon={<ClipboardCheck size={18} />} text="Spis z Natury" />
@@ -406,7 +422,9 @@ export function MainDashboard(props: MainDashboardProps) {
                   <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2">Zarządzanie</h4>
                   <div className="space-y-1">
                     <SidebarItem active={view === 'reports'} onClick={() => { setView('reports'); setIsSidebarOpen(false); }} icon={<BarChart2 size={18} />} text="Raporty i Audyt" />
+                    <SidebarItem active={view === 'timeline'} onClick={() => { setView('timeline'); setIsSidebarOpen(false); }} icon={<Clock size={18} />} text="Oś czasu pracowników" />
                     <SidebarItem active={view === 'element-stats'} onClick={() => { setView('element-stats'); setIsSidebarOpen(false); }} icon={<Package size={18} />} text="Statystyki Elementów" />
+                    <SidebarItem active={false} onClick={() => window.open('#tv', '_blank')} icon={<Activity size={18} />} text="Otwórz TV Monitor" />
                     <SidebarItem active={view === 'manual-entry'} onClick={() => { setView('manual-entry'); setIsSidebarOpen(false); }} icon={<PenTool size={18} />} text="Wpis ręczny" />
                   </div>
                 </div>
@@ -415,6 +433,9 @@ export function MainDashboard(props: MainDashboardProps) {
                   <div className="space-y-1">
                     <SidebarItem active={view === 'employees'} onClick={() => { setView('employees'); setIsSidebarOpen(false); }} icon={<Users size={18} />} text="Pracownicy" />
                     <SidebarItem active={view === 'stations'} onClick={() => { setView('stations'); setIsSidebarOpen(false); }} icon={<Briefcase size={18} />} text="Stanowiska" />
+                    <SidebarItem active={view === 'tech-operations'} onClick={() => { setView('tech-operations'); setIsSidebarOpen(false); }} icon={<Settings size={18} />} text="Słownik Operacji Tech." />
+                    <SidebarItem active={view === 'tech-processes'} onClick={() => { setView('tech-processes'); setIsSidebarOpen(false); }} icon={<LayoutList size={18} />} text="Słownik Procesów Tech." />
+                    <SidebarItem active={view === 'tech-board-drawings'} onClick={() => { setView('tech-board-drawings'); setIsSidebarOpen(false); }} icon={<FileText size={18} />} text="Rysunki Tablic (PDF)" />
                     <SidebarItem active={view === 'docs'} onClick={() => { setView('docs'); setIsSidebarOpen(false); }} icon={<FileText size={18} />} text="Dokumentacja" />
                     <SidebarItem active={view === 'wms-admin'} onClick={() => { setView('wms-admin'); setIsSidebarOpen(false); }} icon={<Settings size={18} />} text="Skrypty WMS" />
                   </div>
@@ -551,6 +572,7 @@ export function MainDashboard(props: MainDashboardProps) {
                   <OrderLogsView 
                     order={viewingOrderLogs} 
                     orders={props.orders} 
+                    employees={props.employees}
                     onClose={() => setViewingOrderLogs(null)} 
                   />
                 )}
@@ -559,11 +581,12 @@ export function MainDashboard(props: MainDashboardProps) {
               </AnimatePresence>
 
               {/* CONTENT AREA SWITCHER */}
-              {view === 'live' && props.isAdmin ? (
+              {view === 'live' && (props.isAdmin || isPodglad) ? (
                 <LiveWorkView 
                   activeLogs={props.allActiveLogs} 
                   orders={combinedOrdersToDisplay} 
                   onForceStop={handleAdminForceStop}
+                  readOnly={isPodglad}
                 />
               ) : view === 'employees' && props.isAdmin ? (
                 <EmployeeManagementView 
@@ -573,6 +596,14 @@ export function MainDashboard(props: MainDashboardProps) {
                 />
               ) : view === 'stations' && props.isAdmin ? (
                 <WorkStationManagementView stations={props.workStations} onAdd={props.onAddStation} onDelete={props.onDeleteStation} onUpdate={props.onUpdateStation} />
+              ) : view === 'tech-operations' && props.isAdmin ? (
+                <TechOperationsView workStations={props.workStations} onBack={() => setView('live')} />
+              ) : view === 'tech-processes' && props.isAdmin ? (
+                <TechProcessesView workStations={props.workStations} onBack={() => setView('live')} />
+              ) : view === 'tech-board-drawings' && props.isAdmin ? (
+                <BoardDrawingsManager orders={props.orders} userProfile={props.profile} />
+              ) : view === 'missing-weights' ? (
+                <MissingWeightsView orders={props.orders} onEditElements={setEditingOrderElements} />
               ) : view === 'manual-entry' && props.isAdmin ? (
                 <div className="space-y-6">
                   <div className="flex justify-center">
@@ -626,14 +657,18 @@ export function MainDashboard(props: MainDashboardProps) {
                 <ElementStatsView orders={props.orders} employees={props.employees} />
               ) : view === 'reports' && props.isAdmin ? (
                 <ReportsView employees={props.employees} orders={props.orders} />
-              ) : view === 'wms-inventory' && isWMSUser ? (
-                <InventoryYardView />
-              ) : view === 'wms-reservations' && isWMSUser ? (
-                <MaterialReservationsView />
+              ) : view === 'timeline' && (props.isAdmin || isPodglad) ? (
+                <EmployeeTimelineView orders={props.orders} onViewOrderLogs={setViewingOrderLogs} />
+              ) : view === 'wms-inventory' && (isWMSUser || isPodglad) ? (
+                <InventoryYardView readOnly={isPodglad} />
+              ) : view === 'wms-reservations' && (isWMSUser || isPodglad) ? (
+                <MaterialReservationsView readOnly={isPodglad} />
               ) : view === 'wms-deliveries' && isWMSUser ? (
                 <ExpectedDeliveriesView onReceiveClick={setItemToReceive} />
               ) : view === 'wms-registry' && isWMSUser ? (
                 <ArticleRegistryView />
+              ) : view === 'wms-coeffs' && isWMSUser ? (
+                <WeightCoefficientsView />
               ) : view === 'wms-wip' && isWMSUser ? (
                 <MaterialWithdrawalView currentUser={currentUser} />
               ) : view === 'wms-returns' && isWMSUser ? (

@@ -394,7 +394,7 @@ export function ReportsView({ employees, orders }: { employees: Employee[], orde
       fileName = `Karta_Dniowki_Mistrza_${startDate}_${endDate}.xlsx`;
     } else if (reportType === 'groups') {
       data = sortedData.map(row => ({ 
-        'Data': row.date, 
+        'Data': row.date.replace(/-/g, '.'), 
         'Imię i Nazwisko': row.employeeName, 
         'Grupa': row.group, 
         'Stanowisko': row.position, 

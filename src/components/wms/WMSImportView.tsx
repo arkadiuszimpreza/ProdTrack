@@ -209,6 +209,7 @@ export function WMSImportView({ userRole }: WMSImportViewProps) {
     }
   };
 
+
   return (
     <div className="bg-white rounded-3xl p-8 border border-stone-200 shadow-xl">
       <AnimatePresence>
@@ -265,6 +266,7 @@ export function WMSImportView({ userRole }: WMSImportViewProps) {
           </label>
         </div>
       </div>
+
     </div>
   );
 }

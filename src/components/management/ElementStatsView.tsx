@@ -154,12 +154,18 @@ export function ElementStatsView({ orders, employees }: ElementStatsViewProps) {
 
         elemMap.forEach((elemAcc, eId) => {
           const element = order?.elements?.find(e => e.id === eId);
-          const weight = eId === 'whole_order'
+          const baseWeight = eId === 'whole_order'
             ? (order?.totalWeight || 0)
             : (element?.weight || 0);
 
           const totalSec = Array.from(elemAcc.workerMap.values()).reduce((s, w) => s + w.totalSeconds, 0);
           const totalQty = Array.from(elemAcc.workerMap.values()).reduce((s, w) => s + w.totalQuantity, 0);
+          
+          const isWholeOrder = eId === 'whole_order';
+          const weight = isWholeOrder && totalQty > 0
+            ? baseWeight * totalQty
+            : baseWeight;
+
           const laborCost = (totalSec / 3600) * HOURLY_RATE;
           const costPerKg = weight > 0 ? laborCost / weight : null;
 

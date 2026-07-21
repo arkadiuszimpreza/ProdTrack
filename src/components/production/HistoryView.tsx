@@ -444,19 +444,23 @@ function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: Producti
 
   const handleSave = async () => {
     const start = new Date(startTimeStr);
-    const end = new Date(endTimeStr);
+    const end = endTimeStr ? new Date(endTimeStr) : null;
     const safeQuantity = isNaN(Number(quantity)) ? 0 : Number(quantity);
 
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      alert("Proszę wprowadzić poprawny czas rozpoczęcia i zakończenia.");
+    if (isNaN(start.getTime())) {
+      alert("Proszę wprowadzić poprawny czas rozpoczęcia.");
       return;
     }
-    if (end < start) {
+    if (end && isNaN(end.getTime())) {
+      alert("Wprowadzony czas zakończenia jest niepoprawny.");
+      return;
+    }
+    if (end && end < start) {
       alert("Błąd: Czas zakończenia nie może być wcześniejszy niż czas rozpoczęcia!");
       return;
     }
 
-    const durationSecs = Math.floor((end.getTime() - start.getTime()) / 1000);
+    const durationSecs = end ? Math.floor((end.getTime() - start.getTime()) / 1000) : (log.duration || 0);
     setIsSaving(true);
 
     try {
@@ -544,7 +548,7 @@ function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: Producti
           elementId: newElementId || null,
           elementName: elementNameForLog,
           startTime: Timestamp.fromDate(start),
-          endTime: Timestamp.fromDate(end),
+          endTime: end ? Timestamp.fromDate(end) : null,
           duration: durationSecs,
           manual: isManual,
           lastModifiedAt: serverTimestamp()
@@ -641,7 +645,7 @@ function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: Producti
               </div>
               <div className="space-y-1">
                 <label className="text-[9px] font-black uppercase tracking-wider text-emerald-600/70 ml-1">Zakończenie</label>
-                <input type="datetime-local" value={endTimeStr} onChange={(e) => setEndTimeStr(e.target.value)} className="w-full p-1.5 bg-white border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-xs font-bold text-stone-700" required />
+                <input type="datetime-local" value={endTimeStr} onChange={(e) => setEndTimeStr(e.target.value)} className="w-full p-1.5 bg-white border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-xs font-bold text-stone-700" />
               </div>
             </div>
             <div className="text-right text-[10px] font-black text-emerald-700 pt-1 border-t border-emerald-200/50">Obecny czas trwania: <span className="text-emerald-900">{previewDurationHours()}h</span></div>

@@ -4,6 +4,7 @@ import { db } from '../../firebase';
 import { Search, ClipboardCheck, FileSpreadsheet, User, ChevronRight, ChevronLeft, Save, CheckCircle2, AlertTriangle, RefreshCcw, Plus, Trash2, Split, Clock, Calculator, X } from 'lucide-react';
 import { InventoryBatch, InventoryAdjustment, InventoryCount, InventoryArticle } from '../../types';
 import * as XLSX from 'xlsx';
+import { compareMaterialNames } from "../../utils/materialUtils";
 import { cn } from '../../utils/firestore-helpers';
 
 // Półautomat do kategoryzowania materiałów.
@@ -27,14 +28,15 @@ const guessPrefix = (name: string, articleNumber?: string): string => {
   if (!name) return 'INNE';
   const n = name.toLowerCase();
   if (n.includes('rura')) return 'RU';
-  if (n.includes('blacha') || n.includes('płyta')) return 'BL';
+  if (n.includes('płyta') || n.includes('plyta')) return 'PL';
+  if (n.includes('blacha')) return 'BL';
   if (n.includes('profil') || n.includes('pręt') || n.includes('ceownik') || n.includes('dwuteownik') || n.includes('kątownik') || n.includes('teownik') || n.includes('płaskownik') || n.includes('wałek')) return 'PR';
   if (n.includes('farba') || n.includes('proszek')) return 'FA';
   if (n.includes('śruba') || n.includes('sruba') || n.includes('wkręt') || n.includes('nakrętka') || n.includes('podkładka')) return 'SR';
   return 'INNE'; 
 };
 
-type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'FA' | 'SR';
+type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'PL' | 'FA' | 'SR';
 
 interface Props {
   currentUser?: string;
@@ -56,7 +58,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
   const [actualQuantities, setActualQuantities] = useState<Record<string, string>>({});
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const [calcValues, setCalcValues] = useState<Record<string, { pieces: string; length: string }>>({});
+  const [calcValues, setCalcValues] = useState<Record<string, { pieces: string; length: string; width?: string; height?: string }>>({});
 
   const [splittingBatch, setSplittingBatch] = useState<InventoryBatch | null>(null);
   const [splitNewNumber, setSplitNewNumber] = useState('');
@@ -72,7 +74,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
   // Auto-calculate kg for BL based on dimensions and pieces
   useEffect(() => {
     if (!splittingBatch) return;
-    if (guessPrefix(splittingBatch.articleName || '') === 'BL') {
+    if (['BL', 'PL'].includes(guessPrefix(splittingBatch.articleName || ''))) {
       const coeffStr = String(splittingBatch.coefficient || '').replace(/,/g, '.');
       const coeffNum = parseFloat(coeffStr);
       let sheetAreaM2 = 0;
@@ -164,14 +166,28 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
 
   const getBlachaCalculatedMetrics = (b: InventoryBatch) => {
     const type = guessPrefix(b.articleName || '');
-    if (type !== 'BL') return null;
+    if ((type !== 'BL' && type !== 'PL')) return null;
     if (!b.coefficient) return null;
-    if (b.unit && b.unit.toLowerCase() !== 'kg') return null;
+    
+    const isM2 = (b.unit || '').toLowerCase() === 'm2' || (b.unit || '').toLowerCase() === 'm²';
+    const isKg = (b.unit || '').toLowerCase() === 'kg';
+    if (!isM2 && !isKg) return null;
     
     const coeffStr = String(b.coefficient).replace(/,/g, '.');
     const coeffNum = parseFloat(coeffStr);
     if (isNaN(coeffNum) || coeffNum <= 0) return null;
-    const totalAreaM2 = (b.numericQuantity || 0) / coeffNum;
+    
+    let totalAreaM2 = 0;
+    let totalWeightKg = 0;
+
+    if (isM2) {
+      totalAreaM2 = b.numericQuantity || 0;
+      totalWeightKg = totalAreaM2 * coeffNum;
+    } else {
+      totalWeightKg = b.numericQuantity || 0;
+      totalAreaM2 = totalWeightKg / coeffNum;
+    }
+
     let sheets = undefined;
     if (b.dimensions) {
       const dimMatch = b.dimensions.match(/(\d+(?:[\.,]\d+)?)[\s]*[xX×][\s]*(\d+(?:[\.,]\d+)?)/);
@@ -184,7 +200,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
          }
       }
     }
-    return { m2: totalAreaM2, sheets };
+    return { m2: totalAreaM2, sheets, kg: totalWeightKg };
   };
 
   const extractLengthFromDimensions = (dim?: string): string => {
@@ -275,7 +291,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
       }
     });
 
-    return Array.from(map.values()).sort((a, b) => a.articleName.localeCompare(b.articleName));
+    return Array.from(map.values()).sort((a, b) => compareMaterialNames(a.articleName, b.articleName));
   }, [batches, catalogArticles]);
 
   const filteredArticles = useMemo(() => {
@@ -331,30 +347,34 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
   // AKCJE INWENTARYZACJI (LOGIKA)
   // =========================================================
   
-  const handleCalcChange = (batchId: string, field: 'pieces' | 'length', val: string, batch: InventoryBatch) => {
+  const handleCalcChange = (batchId: string, field: 'pieces' | 'length' | 'width' | 'height', val: string, batch: InventoryBatch) => {
     setCalcValues(prev => {
-      const cur = prev[batchId] || { pieces: '', length: extractLengthFromDimensions(batch.dimensions) };
+      let dims = { width: '', height: '' };
+      if (batch.dimensions) {
+        const dimMatch = batch.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+        if (dimMatch && dimMatch[1] && dimMatch[2]) {
+          dims.width = dimMatch[1].replace(',', '.');
+          dims.height = dimMatch[2].replace(',', '.');
+        }
+      }
+      const cur = prev[batchId] || { pieces: '', length: extractLengthFromDimensions(batch.dimensions), width: dims.width, height: dims.height };
       const next = { ...cur, [field]: val };
       const p = parseFloat(next.pieces.replace(',', '.'));
       const type = guessPrefix(batch.articleName || '', batch.articleNumber);
 
-      if (type === 'BL') {
+      if ((type === 'BL' || type === 'PL')) {
         const coeffStr = String(batch.coefficient || '').replace(/,/g, '.');
         const coeffNum = parseFloat(coeffStr);
-        if (!isNaN(p) && p >= 0 && !isNaN(coeffNum) && coeffNum > 0 && batch.dimensions) {
-          const dimMatch = batch.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
-          if (dimMatch && dimMatch[1] && dimMatch[2]) {
-            const w = parseFloat(dimMatch[1].replace(/,/g, '.'));
-            const h = parseFloat(dimMatch[2].replace(/,/g, '.'));
-            if (w > 0 && h > 0) {
-              const sheetAreaM2 = (w / 1000) * (h / 1000);
-              const totalAreaM2 = p * sheetAreaM2;
-              handleQtyChange(batchId, Number((totalAreaM2 * coeffNum).toFixed(3)).toString());
-            } else {
-              handleQtyChange(batchId, '');
-            }
+        const w = parseFloat((next.width || '').replace(',', '.'));
+        const h = parseFloat((next.height || '').replace(',', '.'));
+
+        if (!isNaN(p) && p >= 0 && !isNaN(coeffNum) && coeffNum > 0 && !isNaN(w) && w > 0 && !isNaN(h) && h > 0) {
+          const totalAreaM2 = p * (w / 1000) * (h / 1000);
+          const isM2 = (batch.unit || '').toLowerCase() === 'm2' || (batch.unit || '').toLowerCase() === 'm²';
+          if (isM2) {
+            handleQtyChange(batchId, Number((totalAreaM2).toFixed(3)).toString());
           } else {
-            handleQtyChange(batchId, '');
+            handleQtyChange(batchId, Number((totalAreaM2 * coeffNum).toFixed(3)).toString());
           }
         } else {
           handleQtyChange(batchId, '');
@@ -399,7 +419,10 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
       const cv = calcValues[batch.id as string];
       let calcDetails = '';
       if (cv) {
-        if (cv.pieces && cv.length) {
+        const isBL = ['BL', 'PL'].includes(guessPrefix(batch.articleName || '', batch.articleNumber));
+        if (isBL && cv.width && cv.height && cv.pieces) {
+          calcDetails = `${cv.width} x ${cv.height} x ${cv.pieces}`;
+        } else if (cv.pieces && cv.length) {
           calcDetails = `${cv.pieces} x ${cv.length}`;
         } else if (cv.pieces) {
           calcDetails = `${cv.pieces} szt`;
@@ -561,7 +584,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
             </div>
 
             <div className="flex flex-wrap gap-1">
-              {['ALL', 'RU', 'PR', 'BL', 'FA', 'SR'].map(f => (
+              {['ALL', 'RU', 'PR', 'BL', 'PL', 'FA', 'SR'].map(f => (
                 <button 
                   key={f} 
                   onClick={() => setMaterialFilter(f as MaterialFilter)} 
@@ -704,7 +727,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                     const isMatchedBySearch = !!(searchArticle.trim() && (b.batchNumber || '').toLowerCase().includes(searchArticle.toLowerCase().trim()));
                     const inputVal = actualQuantities[b.id as string] || '';
                     const isDrafted = b.draftQuantity !== undefined && b.draftQuantity !== null;
-                    const canUseCalc = ['RU', 'PR', 'BL'].includes(guessPrefix(b.articleName || '', b.articleNumber));
+                    const canUseCalc = ['RU', 'PR', 'BL', 'PL'].includes(guessPrefix(b.articleName || '', b.articleNumber));
                     const useCalc = canUseCalc;
                     const cv = calcValues[b.id] || { pieces: '', length: extractLengthFromDimensions(b.dimensions) };
                     const hasInput = inputVal.trim() !== '';
@@ -762,9 +785,14 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                               if (metrics.sheets !== undefined) {
                                  textParts.push(`${Math.round(metrics.sheets)} ark.`);
                               }
-                              textParts.push(`${parseFloat(metrics.m2.toFixed(3))} m²`);
+                              const isM2 = (b.unit || '').toLowerCase() === 'm2' || (b.unit || '').toLowerCase() === 'm²';
+                              if (isM2) {
+                                textParts.push(`${parseFloat(metrics.kg.toFixed(1))} kg`);
+                              } else {
+                                textParts.push(`${parseFloat(metrics.m2.toFixed(3))} m²`);
+                              }
                               return (
-                                <span className="text-[9px] text-stone-400/80 font-semibold whitespace-nowrap mt-0.5" title="Wartości wyliczone na podstawie wagi i wymiarów">
+                                <span className="text-[9px] text-stone-400/80 font-semibold whitespace-nowrap mt-0.5" title="Wartości wyliczone na podstawie przelicznika i wymiarów">
                                   {textParts.join(' | ')}
                                 </span>
                               );
@@ -829,75 +857,161 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                             </div>
                           )}
 
-                          <div className="flex items-center gap-2">
-                            {/* ROZDZIELENIE PRZYCISKÓW: Zastąp po lewej stronie */}
-                            {isDrafted && hasInput && (
-                              <button 
-                                onClick={() => handleSaveDraft(b, 'replace')}
-                                className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-black text-[10px] shadow-sm flex flex-col items-center justify-center leading-none shrink-0 transition-all active:scale-95 h-[44px] w-[60px]"
-                              >
-                                <RefreshCcw size={14} className="mb-1"/> Zastąp
-                              </button>
+                          <div className="flex flex-col gap-2 w-full">
+                            {useCalc && (
+                              <div className="flex flex-col gap-1.5 mb-2 w-full">
+                                <div className="flex items-center justify-between w-full px-1">
+                                  <span className="text-[9px] uppercase font-bold text-stone-400 shrink-0">Kalk:</span>
+                                  {['BL', 'PL'].includes(guessPrefix(b.articleName || '', b.articleNumber)) && (
+                                    <div className="text-[10px] font-bold text-stone-500 text-right truncate">
+                                      {(() => {
+                                        const p = parseFloat((cv.pieces || '').replace(',', '.'));
+                                        const wStr = cv.width !== undefined ? cv.width : (() => {
+                                          if (b.dimensions) {
+                                            const dimMatch = b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+                                            if (dimMatch && dimMatch[1]) return dimMatch[1].replace(',', '.');
+                                          }
+                                          return '';
+                                        })();
+                                        const hStr = cv.height !== undefined ? cv.height : (() => {
+                                          if (b.dimensions) {
+                                            const dimMatch = b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+                                            if (dimMatch && dimMatch[2]) return dimMatch[2].replace(',', '.');
+                                          }
+                                          return '';
+                                        })();
+                                        const coeffNum = parseFloat(String(b.coefficient || '').replace(/,/g, '.'));
+                                        const w = parseFloat(wStr.replace(',', '.'));
+                                        const h = parseFloat(hStr.replace(',', '.'));
+                                        if (!isNaN(p) && p > 0 && !isNaN(coeffNum) && coeffNum > 0 && !isNaN(w) && w > 0 && !isNaN(h) && h > 0) {
+                                              const m2 = p * (w / 1000) * (h / 1000);
+                                              const kg = m2 * coeffNum;
+                                              return <span title={`${m2.toFixed(3)} m² = ${kg.toFixed(1)} kg`}>{m2.toFixed(3)} m² = {kg.toFixed(1)} kg</span>;
+                                        }
+                                        return null;
+                                      })()}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex gap-1 h-[32px] items-center w-full">
+                                  {['BL', 'PL'].includes(guessPrefix(b.articleName || '', b.articleNumber)) ? (
+                                    <>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        min="0"
+                                        placeholder="Szer(mm)"
+                                        value={cv.width !== undefined ? cv.width : (() => {
+                                          if (b.dimensions) {
+                                            const dimMatch = b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+                                            if (dimMatch && dimMatch[1]) return dimMatch[1].replace(',', '.');
+                                          }
+                                          return '';
+                                        })()}
+                                        onChange={(e) => handleCalcChange(b.id as string, 'width', e.target.value, b)}
+                                        className={cn(
+                                          "flex-1 w-0 px-1 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
+                                          cv.width || (b.dimensions && b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]/)) ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
+                                        )}
+                                      />
+                                      <div className="flex items-center text-stone-400 text-xs font-bold px-0.5">x</div>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        min="0"
+                                        placeholder="Wys(mm)"
+                                        value={cv.height !== undefined ? cv.height : (() => {
+                                          if (b.dimensions) {
+                                            const dimMatch = b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+                                            if (dimMatch && dimMatch[2]) return dimMatch[2].replace(',', '.');
+                                          }
+                                          return '';
+                                        })()}
+                                        onChange={(e) => handleCalcChange(b.id as string, 'height', e.target.value, b)}
+                                        className={cn(
+                                          "flex-1 w-0 px-1 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
+                                          cv.height || (b.dimensions && b.dimensions.match(/[xX×]\s*(\d+(?:[\.,]\d+)?)/)) ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
+                                        )}
+                                      />
+                                      <div className="flex items-center text-stone-400 text-xs font-bold px-0.5">x</div>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        min="0"
+                                        placeholder="Szt"
+                                        value={cv.pieces}
+                                        onChange={(e) => handleCalcChange(b.id as string, 'pieces', e.target.value, b)}
+                                        className={cn(
+                                          "flex-1 w-0 px-1 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
+                                          cv.pieces ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
+                                        )}
+                                      />
+                                    </>
+                                  ) : (
+                                    <>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        min="0"
+                                        placeholder="Szt"
+                                        value={cv.pieces}
+                                        onChange={(e) => handleCalcChange(b.id as string, 'pieces', e.target.value, b)}
+                                        className={cn(
+                                          "w-1/2 px-2 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
+                                          cv.pieces ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
+                                        )}
+                                      />
+                                      <div className="flex items-center text-stone-400 text-xs font-bold px-1">x</div>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        step="0.001"
+                                        min="0"
+                                        placeholder="Dł(m)"
+                                        value={cv.length}
+                                        onChange={(e) => handleCalcChange(b.id as string, 'length', e.target.value, b)}
+                                        className={cn(
+                                          "w-1/2 px-2 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
+                                          cv.length ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-stone-50 border-stone-200"
+                                        )}
+                                      />
+                                    </>
+                                  )}
+                                </div>
+                              </div>
                             )}
 
-                            
-                            {useCalc ? (
-                               <div className="flex flex-1 gap-1 h-[44px]">
-                                 <input
-                                   type="text"
-                                   inputMode="decimal"
-                                   min="0"
-                                   placeholder="Szt"
-                                   value={cv.pieces}
-                                   onChange={(e) => handleCalcChange(b.id as string, 'pieces', e.target.value, b)}
-                                   className={cn(
-                                     (guessPrefix(b.articleName || '', b.articleNumber) === 'BL') ? "w-full px-2 py-1 border rounded-xl text-center font-black text-sm transition-all outline-none min-w-0" : "w-1/2 px-2 py-1 border rounded-xl text-center font-black text-sm transition-all outline-none min-w-0",
-                                     cv.pieces ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
-                                   )}
-                                 />
-                                 
-                                 {guessPrefix(b.articleName || '', b.articleNumber) !== 'BL' && (
-                                   <>
-                                     <div className="flex items-center text-stone-400 text-xs font-bold px-1">x</div>
-                                     <input
-                                       type="text"
-                                       inputMode="decimal"
-                                       step="0.001"
-                                       min="0"
-                                       placeholder="Dł(m)"
-                                       value={cv.length}
-                                       onChange={(e) => handleCalcChange(b.id as string, 'length', e.target.value, b)}
-                                       className={cn(
-                                         "w-1/2 px-2 py-1 border rounded-xl text-center font-black text-sm transition-all outline-none min-w-0",
-                                         cv.length ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-stone-50 border-stone-200"
-                                       )}
-                                     />
-                                   </>
-                                 )}
-                               </div>
-                            ) : (
+                            <div className="flex items-center gap-2">
+                              {isDrafted && hasInput && (
+                                <button 
+                                  onClick={() => handleSaveDraft(b, 'replace')}
+                                  className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-black text-[10px] shadow-sm flex flex-col items-center justify-center leading-none shrink-0 transition-all active:scale-95 h-[44px] w-[60px]"
+                                >
+                                  <RefreshCcw size={14} className="mb-1"/> Zastąp
+                                </button>
+                              )}
+
                               <input 
                                 type="text" 
                                 inputMode="decimal"
                                 step="0.001"
                                 min="0"
-                                placeholder={isDrafted ? "Dopisz ilość..." : "Wpisz stan..."}
+                                placeholder={isDrafted ? `Dopisz (${b.unit || 'kg'})...` : `Wpisz stan (${b.unit || 'kg'})...`}
                                 value={inputVal}
                                 onChange={(e) => handleQtyChange(b.id as string, e.target.value)}
                                 className={cn(
-                                  "flex-1 px-3 py-2 border rounded-xl font-black text-sm transition-all outline-none h-[44px]",
+                                  "flex-1 w-0 px-3 py-2 border rounded-xl font-black text-sm transition-all outline-none h-[44px]",
                                   hasInput ? "bg-amber-50 border-amber-300 text-amber-700 placeholder:text-amber-300/50" : "bg-stone-50 border-stone-200 focus:border-amber-400 focus:ring-2 focus:ring-amber-100 placeholder:text-stone-300",
                                   isDrafted && !hasInput && "bg-white border-indigo-300 text-indigo-700"
                                 )}
                               />
-                            )}
 
                             {/* PRAWA STRONA: Zapisz, Dodaj, albo ikona kosza do wyczyszczenia */}
                             {!isDrafted ? (
                                <button 
                                  onClick={() => handleSaveDraft(b, 'replace')}
                                  disabled={!hasInput || isProcessing}
-                                 className={cn("px-3 py-2 rounded-xl flex items-center justify-center font-black transition-all shadow-sm text-xs uppercase h-[44px]", hasInput ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-stone-100 text-stone-400")}
+                                 className={cn("px-3 py-2 shrink-0 rounded-xl flex items-center justify-center font-black transition-all shadow-sm text-xs uppercase h-[44px]", hasInput ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-stone-100 text-stone-400")}
                                >
                                  <Save size={14} className="mr-1"/> Zapisz
                                </button>
@@ -927,6 +1041,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                                  </div>
                                )
                             )}
+                          </div>
                           </div>
                         </div>
                       </div>
@@ -1010,7 +1125,7 @@ export function InventoryTakingView({ currentUser = 'Inwentaryzator' }: Props) {
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                {guessPrefix(splittingBatch.articleName || '', splittingBatch.articleNumber) === 'BL' ? (
+                {['BL', 'PL'].includes(guessPrefix(splittingBatch.articleName || '', splittingBatch.articleNumber)) ? (
                   <>
                     <div>
                       <label className="block text-[10px] font-black uppercase text-stone-500 mb-1">Stan w systemie (Szt)</label>

@@ -3,9 +3,10 @@ import { collection, query, onSnapshot, writeBatch, doc, serverTimestamp, runTra
 import { db } from '../../firebase';
 import { Archive, Search, AlertCircle, Save, CheckCircle } from 'lucide-react';
 import { InventoryBatch, InventoryCount } from '../../types';
+import { compareMaterialNames } from "../../utils/materialUtils";
 import { cn } from '../../utils/firestore-helpers';
 
-type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'FA' | 'SR' | 'INNE';
+type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'PL' | 'FA' | 'SR' | 'INNE';
 
 // Półautomat do kategoryzowania materiałów.
 // Przyjmuje opcjonalny numer artykułu z ERP, który ma najwyższy priorytet –
@@ -25,7 +26,8 @@ const guessPrefix = (name: string, articleNumber?: string): string => {
   if (!name) return 'INNE';
   const n = name.toLowerCase();
   if (n.includes('rura')) return 'RU';
-  if (n.includes('blacha') || n.includes('płyta')) return 'BL';
+  if (n.includes('płyta') || n.includes('plyta')) return 'PL';
+  if (n.includes('blacha')) return 'BL';
   if (n.includes('profil') || n.includes('pręt') || n.includes('ceownik')) return 'PR';
   if (n.includes('farba') || n.includes('proszek')) return 'FA';
   if (n.includes('śruba') || n.includes('sruba') || n.includes('wkręt') || n.includes('nakrętka') || n.includes('podkładka')) return 'SR';
@@ -180,7 +182,7 @@ export function InventoryZeroingView({ currentUser }: Props) {
               Kategoria Asortymentu
             </label>
             <div className="flex flex-wrap gap-2">
-                {(['ALL', 'RU', 'PR', 'BL', 'FA', 'SR', 'INNE'] as MaterialFilter[]).map(cat => (
+                {(['ALL', 'RU', 'PR', 'BL', 'PL', 'FA', 'SR', 'INNE'] as MaterialFilter[]).map(cat => (
                   <button
                     key={cat}
                     onClick={() => setSelectedCategory(cat)}

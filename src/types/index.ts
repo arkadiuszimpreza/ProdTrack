@@ -203,7 +203,7 @@ export interface Employee {
   createdAt?: any;
 }
 
-export type UserRole = 'admin' | 'worker' | 'operator' | 'magazynier' | 'operator-wms';
+export type UserRole = 'admin' | 'worker' | 'operator' | 'magazynier' | 'operator-wms' | 'tv-monitor' | 'podglad' | 'operator-tablice';
 
 /**
  * Profil użytkownika systemu (osoby logującej się przez Google).
@@ -216,7 +216,7 @@ export interface UserProfile {
   displayName: string;
   /** Adres e-mail użytkownika */
   email: string;
-  /** Rola w systemie (admin - pełny dostęp, worker - podgląd, operator - terminal, operator-wms - terminal z opcją wms) */
+  /** Rola w systemie (admin - pełny dostęp, worker - terminal, operator - terminal, operator-wms - terminal z opcją wms, podglad - tylko odczyt wybranych widoków) */
   role: UserRole;
   /** Opcjonalne imię */
   firstName?: string;
@@ -429,9 +429,11 @@ export interface MaterialWithdrawal {
   batchNumber: string; // np. 26RU042
   quantityWithdrawn: number; // Ilość (w jednostce wsadu np. mb, kg)
   returnedQuantity?: number;
+  calculatorDetails?: string; // Informacja o sposobie przeliczenia np. z kalkulatora blach
   type: 'WITHDRAWAL' | 'RETURN'; // Zwykłe pobranie (MM-) lub zwrot na plac (MM+)
   originalWithdrawalId?: string; // Powiązanie ze zwrotem
   sourcePurchaseOrderId?: string; // Do rozbicia kosztów w ERP 
+  erpExportDate?: string; // Data i czas wyeksportowania do pliku ERP
   createdAt?: any;
   createdBy?: string;
 }
@@ -453,5 +455,69 @@ export interface InventoryAdjustment {
   draftUpdatedAt?: any;
   draftUpdatedBy?: string;
 }
+
+// --- TABLICE WARSTWOWE (RYSUNKI) ---
+export interface BoardDrawingElement {
+  id: string; // Wygenerowane np. eps_1_...
+  name: string; // np. "eps.1"
+  x: number;
+  y: number;
+  page: number;
+  mappedOrderNumber?: string | null; // Przypisane zlecenie produkcyjne dla tego elementu (np. numer zlecenia)
+  mappedOrderId?: string | null; // Id zlecenia produkcyjnego z bazy
+  detectedDimension?: string | null;
+  detectedPoz?: string | null;
+  width?: number | null;
+  height?: number | null;
+  areaSquareMeters?: number | null;
+  profilesLength?: number | null;
+  locksLength?: number | null;
+  frameLength?: number | null;
+}
+
+export interface BoardDrawing {
+  id: string;
+  clientOrderNumber: string; // np. numer zlecenia klienta
+  fileName: string;
+  fileData: string; // base64 pdf data
+  elements: BoardDrawingElement[];
+  createdAt: any;
+  createdBy: string;
+}
+
+// --- PROCESY TECHNOLOGICZNE ---
+
+/**
+ * Słownik operacji technologicznych.
+ */
+export interface TechOperation {
+  id?: string;
+  name: string;
+  workStationId: string; // Przypisanie do stanowiska
+  createdAt?: any;
+}
+
+/**
+ * Krok w procesie technologicznym.
+ */
+export interface TechProcessStep {
+  operationId: string;
+  workStationId?: string; // Wybrane gniazdo (MPK) dla kroku
+  name?: string; // Nazwa operacji dla wygody
+  orderIndex: number; // Kolejność w procesie
+  stage?: number; // Etap (kroki w tym samym etapie mogą być wykonywane równolegle)
+  isExportPoint?: boolean; // Checkbox, który oznacza operację wyjściową
+}
+
+/**
+ * Definicja procesu technologicznego (szablon przypisywany do elementu).
+ */
+export interface TechProcess {
+  id?: string;
+  name: string; // Nazwa procesu np. "Proces dla Bariery U2b"
+  steps: TechProcessStep[];
+  createdAt?: any;
+}
+
 
 

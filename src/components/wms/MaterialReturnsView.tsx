@@ -10,14 +10,15 @@ const guessPrefix = (name: string): string => {
   if (!name) return 'INNE';
   const n = name.toLowerCase();
   if (n.includes('rura')) return 'RU';
-  if (n.includes('blacha') || n.includes('płyta')) return 'BL';
+  if (n.includes('płyta') || n.includes('plyta')) return 'PL';
+  if (n.includes('blacha')) return 'BL';
   if (n.includes('profil') || n.includes('pręt') || n.includes('ceownik')) return 'PR';
   if (n.includes('farba') || n.includes('proszek')) return 'FA';
   if (n.includes('śruba') || n.includes('sruba') || n.includes('wkręt') || n.includes('nakrętka') || n.includes('podkładka')) return 'SR';
   return 'INNE'; 
 };
 
-type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'FA' | 'SR';
+type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'PL' | 'FA' | 'SR';
 
 interface MaterialReturnsViewProps {
   currentUser?: string; 
@@ -37,6 +38,8 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
   
   const [returnCalcPieces, setReturnCalcPieces] = useState<string>('');
   const [returnCalcLength, setReturnCalcLength] = useState<string>('');
+  const [returnCalcWidth, setReturnCalcWidth] = useState<string>('');
+  const [returnCalcHeight, setReturnCalcHeight] = useState<string>('');
 
   const extractLengthFromDimensions = (dim?: string): string => {
     if (!dim) return '';
@@ -79,8 +82,18 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
     const batch = batches.find(b => b.batchNumber === w.batchNumber);
     if (batch) {
       setReturnCalcLength(extractLengthFromDimensions(batch.dimensions));
+      const dimMatch = batch.dimensions?.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+      if (dimMatch && dimMatch[1] && dimMatch[2]) {
+         setReturnCalcWidth(dimMatch[1].replace(',', '.'));
+         setReturnCalcHeight(dimMatch[2].replace(',', '.'));
+      } else {
+         setReturnCalcWidth('');
+         setReturnCalcHeight('');
+      }
     } else {
       setReturnCalcLength('');
+      setReturnCalcWidth('');
+      setReturnCalcHeight('');
     }
   };
 
@@ -89,19 +102,29 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
     setReturnInputQty('');
     setReturnCalcPieces('');
     setReturnCalcLength('');
+    setReturnCalcWidth('');
+    setReturnCalcHeight('');
   };
 
-  const handleReturnCalcChange = (field: 'pieces' | 'length', val: string) => {
+  const handleReturnCalcChange = (field: 'pieces' | 'length' | 'width' | 'height', val: string) => {
     if (!returnModalItem) return;
     
     let pieces = returnCalcPieces;
     let len = returnCalcLength;
+    let wVal = returnCalcWidth;
+    let hVal = returnCalcHeight;
     if (field === 'pieces') {
       pieces = val;
       setReturnCalcPieces(val);
-    } else {
+    } else if (field === 'length') {
       len = val;
       setReturnCalcLength(val);
+    } else if (field === 'width') {
+      wVal = val;
+      setReturnCalcWidth(val);
+    } else if (field === 'height') {
+      hVal = val;
+      setReturnCalcHeight(val);
     }
     
     const batch = batches.find(b => b.batchNumber === returnModalItem.batchNumber);
@@ -112,19 +135,19 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
 
     let newReturnQtyStr = '';
 
-    if (type === 'BL') {
+    if ((type === 'BL' || type === 'PL')) {
       const coeffStr = String(batch.coefficient || '').replace(/,/g, '.');
       const coeffNum = parseFloat(coeffStr);
-      if (!isNaN(p) && p >= 0 && !isNaN(coeffNum) && coeffNum > 0 && batch.dimensions) {
-        const dimMatch = batch.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
-        if (dimMatch && dimMatch[1] && dimMatch[2]) {
-          const w = parseFloat(dimMatch[1].replace(/,/g, '.'));
-          const h = parseFloat(dimMatch[2].replace(/,/g, '.'));
-          if (w > 0 && h > 0) {
-            const sheetAreaM2 = (w / 1000) * (h / 1000);
-            const totalAreaM2 = p * sheetAreaM2;
-            newReturnQtyStr = Number((totalAreaM2 * coeffNum).toFixed(3)).toString();
-          }
+      const wNum = parseFloat(wVal.replace(/,/g, '.'));
+      const hNum = parseFloat(hVal.replace(/,/g, '.'));
+
+      if (!isNaN(p) && p >= 0 && !isNaN(coeffNum) && coeffNum > 0 && !isNaN(wNum) && wNum > 0 && !isNaN(hNum) && hNum > 0) {
+        const totalAreaM2 = p * (wNum / 1000) * (hNum / 1000);
+        const isM2 = (batch.unit || '').toLowerCase() === 'm2' || (batch.unit || '').toLowerCase() === 'm²';
+        if (isM2) {
+          newReturnQtyStr = Number((totalAreaM2).toFixed(3)).toString();
+        } else {
+          newReturnQtyStr = Number((totalAreaM2 * coeffNum).toFixed(3)).toString();
         }
       }
     } else {
@@ -301,7 +324,7 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
           </div>
 
           <div className="flex flex-wrap gap-1 items-center">
-            {['ALL', 'RU', 'PR', 'BL', 'FA', 'SR'].map(f => (
+            {['ALL', 'RU', 'PR', 'BL', 'PL', 'FA', 'SR'].map(f => (
               <button 
                 key={f} 
                 onClick={() => setMaterialFilter(f as MaterialFilter)} 
@@ -464,28 +487,68 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
                   autoFocus
                 />
                 
-                {['PR', 'RU', 'BL'].includes(guessPrefix(returnModalItem.articleName || '')) && (
+                {['PR', 'RU', 'BL', 'PL'].includes(guessPrefix(returnModalItem.articleName || '')) && (
                   <div className="mt-4 pt-4 border-t border-stone-100">
                     <div className="text-[10px] uppercase font-bold text-stone-400 mb-2 flex justify-between items-center">
                       <span>Kalkulator resztek</span>
-                      {guessPrefix(returnModalItem.articleName || '') === 'BL' && <span className="text-amber-500">Szacunkowo dla blach</span>}
+                      {['BL', 'PL'].includes(guessPrefix(returnModalItem.articleName || '')) && <span className="text-amber-500">Szacunkowo dla blach</span>}
                     </div>
                     <div className="flex gap-2 h-12">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        min="0"
-                        placeholder="Ilość sztuk"
-                        value={returnCalcPieces}
-                        onChange={(e) => handleReturnCalcChange('pieces', e.target.value)}
-                        className={cn(
-                          "w-full px-4 py-2 border-2 rounded-xl text-center font-black text-lg transition-all outline-none focus:border-emerald-500",
-                          returnCalcPieces ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-stone-50 border-stone-200"
-                        )}
-                      />
-                      
-                      {guessPrefix(returnModalItem.articleName || '') !== 'BL' && (
+                      {['BL', 'PL'].includes(guessPrefix(returnModalItem.articleName || '')) ? (
                         <>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            min="0"
+                            placeholder="Szer (mm)"
+                            value={returnCalcWidth}
+                            onChange={(e) => handleReturnCalcChange('width', e.target.value)}
+                            className={cn(
+                              "w-full px-2 py-2 border-2 rounded-xl text-center font-black text-sm transition-all outline-none focus:border-emerald-500",
+                              returnCalcWidth ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-stone-50 border-stone-200"
+                            )}
+                          />
+                          <div className="flex items-center justify-center text-stone-300 font-black text-xl">×</div>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            min="0"
+                            placeholder="Wys (mm)"
+                            value={returnCalcHeight}
+                            onChange={(e) => handleReturnCalcChange('height', e.target.value)}
+                            className={cn(
+                              "w-full px-2 py-2 border-2 rounded-xl text-center font-black text-sm transition-all outline-none focus:border-emerald-500",
+                              returnCalcHeight ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-stone-50 border-stone-200"
+                            )}
+                          />
+                          <div className="flex items-center justify-center text-stone-300 font-black text-xl">×</div>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            min="0"
+                            placeholder="Szt"
+                            value={returnCalcPieces}
+                            onChange={(e) => handleReturnCalcChange('pieces', e.target.value)}
+                            className={cn(
+                              "w-full px-2 py-2 border-2 rounded-xl text-center font-black text-sm transition-all outline-none focus:border-emerald-500",
+                              returnCalcPieces ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-stone-50 border-stone-200"
+                            )}
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            min="0"
+                            placeholder="Ilość sztuk"
+                            value={returnCalcPieces}
+                            onChange={(e) => handleReturnCalcChange('pieces', e.target.value)}
+                            className={cn(
+                              "w-full px-4 py-2 border-2 rounded-xl text-center font-black text-lg transition-all outline-none focus:border-emerald-500",
+                              returnCalcPieces ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-stone-50 border-stone-200"
+                            )}
+                          />
                           <div className="flex items-center justify-center px-2 text-stone-300 font-black text-xl">×</div>
                           <input
                             type="text"

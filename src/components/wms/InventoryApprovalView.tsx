@@ -24,7 +24,8 @@ const guessPrefix = (name: string, articleNumber?: string): string => {
   if (!name) return 'INNE';
   const n = name.toLowerCase();
   if (n.includes('rura')) return 'RU';
-  if (n.includes('blacha') || n.includes('płyta')) return 'BL';
+  if (n.includes('płyta') || n.includes('plyta')) return 'PL';
+  if (n.includes('blacha')) return 'BL';
   if (n.includes('profil') || n.includes('pręt') || n.includes('ceownik')) return 'PR';
   if (n.includes('farba') || n.includes('proszek')) return 'FA';
   if (n.includes('śruba') || n.includes('sruba') || n.includes('wkręt') || n.includes('nakrętka') || n.includes('podkładka')) return 'SR';
@@ -45,7 +46,7 @@ const formatDate = (date: Date) => {
   return `${y}-${m}-${d}`;
 };
 
-type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'FA' | 'SR' | 'INNE';
+type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'PL' | 'FA' | 'SR' | 'INNE';
 
 interface Props {
   currentUser?: string;
@@ -292,7 +293,7 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
         <div className="p-4 border-b border-stone-200 bg-stone-50 flex items-center justify-between">
             <div className="flex flex-wrap gap-2 items-center">
             <span className="text-xs font-black uppercase text-stone-500 mr-2">Asortyment:</span>
-            {['ALL', 'RU', 'PR', 'BL', 'FA', 'SR', 'INNE'].map(f => (
+            {['ALL', 'RU', 'PR', 'BL', 'PL', 'FA', 'SR', 'INNE'].map(f => (
               <button 
                 key={f} 
                 onClick={() => setApprovalCategory(f as MaterialFilter)} 

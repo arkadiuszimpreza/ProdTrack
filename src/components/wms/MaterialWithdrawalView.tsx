@@ -4,6 +4,7 @@ import { db } from '../../firebase';
 import { Search, PackageMinus, FileSpreadsheet, User, ClipboardList, ChevronRight, ChevronLeft, X, Box, CheckCircle, Calendar as CalendarIcon } from 'lucide-react';
 import { InventoryBatch, MaterialWithdrawal } from '../../types';
 import * as XLSX from 'xlsx';
+import { compareMaterialNames } from "../../utils/materialUtils";
 import { cn } from '../../utils/firestore-helpers';
 
 // Półautomat do kategoryzowania materiałów.
@@ -27,13 +28,14 @@ const guessPrefix = (name: string, articleNumber?: string): string => {
   if (!name) return 'INNE';
   const n = name.toLowerCase();
   if (n.includes('rura')) return 'RU';
-  if (n.includes('blacha') || n.includes('płyta')) return 'BL';
+  if (n.includes('płyta') || n.includes('plyta')) return 'PL';
+  if (n.includes('blacha')) return 'BL';
   if (n.includes('profil') || n.includes('pręt') || n.includes('ceownik') || n.includes('dwuteownik') || n.includes('kątownik') || n.includes('teownik') || n.includes('płaskownik') || n.includes('wałek')) return 'PR';
   if (n.includes('farba') || n.includes('proszek')) return 'FA';
   if (n.includes('śruba') || n.includes('sruba') || n.includes('wkręt') || n.includes('nakrętka') || n.includes('podkładka')) return 'SR';
   return 'INNE'; 
 };
-type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'FA' | 'SR';
+type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'PL' | 'FA' | 'SR';
 
 interface MaterialWithdrawalViewProps {
   currentUser?: string; 
@@ -65,12 +67,14 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
   const [searchArticle, setSearchArticle] = useState('');
   const [materialFilter, setMaterialFilter] = useState<MaterialFilter>('ALL');
   const [selectedArticle, setSelectedArticle] = useState<string | null>(null);
-  const [withdrawalQuantities, setWithdrawalQuantities] = useState<Record<string, number>>({});
-  const [calcValues, setCalcValues] = useState<Record<string, { pieces: string; length: string }>>({});
+  const [withdrawalQuantities, setWithdrawalQuantities] = useState<Record<string, any>>({});
+  const [calcValues, setCalcValues] = useState<Record<string, { pieces: string; length: string; width?: string; height?: string }>>({});
 
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [viewMode, setViewMode] = useState<'HISTORY' | 'AGGREGATED'>('HISTORY');
+  const [hideExported, setHideExported] = useState(false);
+  const [selectedForExport, setSelectedForExport] = useState<Set<string>>(new Set());
 
   const setDateRange = (weeksAgo: number) => {
     const now = new Date();
@@ -85,7 +89,7 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
 
   const getBlachaCalculatedMetrics = (b: InventoryBatch) => {
     const type = guessPrefix(b.articleName || '');
-    if (type !== 'BL') return null;
+    if ((type !== 'BL' && type !== 'PL')) return null;
     if (!b.coefficient) return null;
     if (b.unit && b.unit.toLowerCase() !== 'kg') return null;
     
@@ -117,28 +121,36 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
     return '';
   };
 
-  const handleCalcChange = (batchId: string, field: 'pieces' | 'length', val: string, batch: InventoryBatch) => {
+  const handleCalcChange = (batchId: string, field: 'pieces' | 'length' | 'width' | 'height', val: string, batch: InventoryBatch) => {
     setCalcValues(prev => {
-      const cur = prev[batchId] || { pieces: '', length: extractLengthFromDimensions(batch.dimensions) };
+      let dims = { width: '', height: '' };
+      if (batch.dimensions) {
+        const dimMatch = batch.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+        if (dimMatch && dimMatch[1] && dimMatch[2]) {
+          dims.width = dimMatch[1].replace(',', '.');
+          dims.height = dimMatch[2].replace(',', '.');
+        }
+      }
+      const cur = prev[batchId] || { pieces: '', length: extractLengthFromDimensions(batch.dimensions), width: dims.width, height: dims.height };
       const next = { ...cur, [field]: val };
       const p = parseFloat(next.pieces.replace(/,/g, '.'));
       const type = guessPrefix(batch.articleName || '');
 
       let newWithdrawalQtyStr = '';
 
-      if (type === 'BL') {
+      if ((type === 'BL' || type === 'PL')) {
         const coeffStr = String(batch.coefficient || '').replace(/,/g, '.');
         const coeffNum = parseFloat(coeffStr);
-        if (!isNaN(p) && p >= 0 && !isNaN(coeffNum) && coeffNum > 0 && batch.dimensions) {
-          const dimMatch = batch.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
-          if (dimMatch && dimMatch[1] && dimMatch[2]) {
-            const w = parseFloat(dimMatch[1].replace(/,/g, '.'));
-            const h = parseFloat(dimMatch[2].replace(/,/g, '.'));
-            if (w > 0 && h > 0) {
-              const sheetAreaM2 = (w / 1000) * (h / 1000);
-              const totalAreaM2 = p * sheetAreaM2;
-              newWithdrawalQtyStr = Number((totalAreaM2 * coeffNum).toFixed(3)).toString();
-            }
+        const w = parseFloat((next.width || '').replace(',', '.'));
+        const h = parseFloat((next.height || '').replace(',', '.'));
+
+        if (!isNaN(p) && p >= 0 && !isNaN(coeffNum) && coeffNum > 0 && !isNaN(w) && w > 0 && !isNaN(h) && h > 0) {
+          const totalAreaM2 = p * (w / 1000) * (h / 1000);
+          const isM2 = (batch.unit || '').toLowerCase() === 'm2' || (batch.unit || '').toLowerCase() === 'm²';
+          if (isM2) {
+            newWithdrawalQtyStr = Number((totalAreaM2).toFixed(3)).toString();
+          } else {
+            newWithdrawalQtyStr = Number((totalAreaM2 * coeffNum).toFixed(3)).toString();
           }
         }
       } else {
@@ -198,7 +210,7 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
         map.set(key, { articleNumber: key, articleName: b.articleName || '', availableQty: currentQty });
       }
     });
-    return Array.from(map.values()).sort((a, b) => a.articleName.localeCompare(b.articleName));
+    return Array.from(map.values()).sort((a, b) => compareMaterialNames(a.articleName, b.articleName));
   }, [batches]);
 
   const filteredArticles = useMemo(() => {
@@ -252,10 +264,13 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
   const applyCountToWithdrawal = (count: any, batch: InventoryBatch) => {
     if (count.calculatorDetails) {
       const parts = count.calculatorDetails.split('x').map((pt: string) => pt.trim());
-      if (parts.length === 2 && guessPrefix(batch.articleName || '') !== 'INNE') {
+      if (parts.length === 3 && ['BL', 'PL'].includes(guessPrefix(batch.articleName || '', batch.articleNumber))) {
+        handleCalcChange(batch.id as string, 'width', parts[0], batch);
+        setTimeout(() => handleCalcChange(batch.id as string, 'height', parts[1], batch), 0);
+        setTimeout(() => handleCalcChange(batch.id as string, 'pieces', parts[2], batch), 10);
+        return;
+      } else if (parts.length === 2 && guessPrefix(batch.articleName || '') !== 'INNE') {
         handleCalcChange(batch.id as string, 'pieces', parts[0], batch);
-        // We need a slight timeout or direct modification because handleCalcChange uses setCalcValues which sets withdrawalQuantities.
-        // Actually, just calling them sequentially works because both use functional state updates.
         setTimeout(() => handleCalcChange(batch.id as string, 'length', parts[1], batch), 0);
         return;
       }
@@ -298,7 +313,7 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
           }
         }
         
-        for (const { snap, qtyToTake, batchRef } of snaps) {
+        for (const { snap, qtyToTake, batchRef, batchId } of snaps) {
           const batchData = snap.data();
           const currentAvailable = batchData.numericQuantity || 0;
           const newBatchQty = Number((currentAvailable - qtyToTake).toFixed(3));
@@ -313,6 +328,19 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
             quantityString: `${newBatchQty} ${unitLabel}`
           });
           
+          const cv = calcValues[batchId];
+          let calcDetails = '';
+          if (cv) {
+            const isBL = ['BL', 'PL'].includes(guessPrefix(batchData.articleName || '', batchData.articleNumber));
+            if (isBL && cv.width && cv.height && cv.pieces) {
+              calcDetails = `${cv.width} x ${cv.height} x ${cv.pieces}`;
+            } else if (cv.pieces && cv.length) {
+              calcDetails = `${cv.pieces} x ${cv.length}`;
+            } else if (cv.pieces) {
+              calcDetails = `${cv.pieces} szt`;
+            }
+          }
+
           const withdrawalRef = doc(collection(db, 'materialWithdrawals'));
           const withdrawalData: MaterialWithdrawal = {
             withdrawalDate: todayStr,
@@ -323,6 +351,7 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
             sourcePurchaseOrderId: batchData.sourcePurchaseOrderId || '',
             quantityWithdrawn: qtyToTake,
             type: 'WITHDRAWAL',
+            calculatorDetails: calcDetails,
             createdAt: serverTimestamp(),
             createdBy: currentUser
           };
@@ -354,8 +383,11 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
     if (endDate) {
       filtered = filtered.filter(w => w.withdrawalDate <= endDate);
     }
+    if (hideExported) {
+      filtered = filtered.filter(w => !w.erpExportDate);
+    }
     return filtered;
-  }, [withdrawals, startDate, endDate]);
+  }, [withdrawals, startDate, endDate, hideExported]);
 
   const aggregatedWithdrawals = useMemo(() => {
     let filtered = withdrawals;
@@ -364,6 +396,9 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
     }
     if (endDate) {
       filtered = filtered.filter(w => w.withdrawalDate <= endDate);
+    }
+    if (hideExported) {
+      filtered = filtered.filter(w => !w.erpExportDate);
     }
     
     // Group by articleNumber_batchNumber
@@ -378,11 +413,15 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
           articleName: w.articleName,
           batchNumber: w.batchNumber,
           netQuantity: 0,
-          workerNames: new Set<string>()
+          workerNames: new Set<string>(),
+          sourceIds: [] // track original ids
         });
       }
       const group = grouped.get(key);
       group.workerNames.add(w.workerName);
+      if (w.id) {
+        group.sourceIds.push(w.id);
+      }
       if (w.type === 'WITHDRAWAL') {
         group.netQuantity += w.quantityWithdrawn;
       } else if (w.type === 'RETURN') {
@@ -395,10 +434,16 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
       workerName: Array.from(g.workerNames).join(', '),
       netQuantity: Number(g.netQuantity.toFixed(3))
     })).filter(g => g.netQuantity !== 0); // Omit 0 net balances
-  }, [withdrawals, startDate, endDate]);
+  }, [withdrawals, startDate, endDate, hideExported]);
 
-  const handleExportToERP = () => {
-    const listToExport = viewMode === 'AGGREGATED' ? aggregatedWithdrawals : filteredHistory;
+  const handleExportToERP = async () => {
+    let listToExport: any[] = viewMode === 'AGGREGATED' ? aggregatedWithdrawals : filteredHistory;
+    
+    // If items are selected, only export those
+    if (selectedForExport.size > 0) {
+      listToExport = listToExport.filter(w => selectedForExport.has(w.id as string));
+    }
+
     if (listToExport.length === 0) return alert('Brak pobrań do wyeksportowania!');
     
     let exportData;
@@ -422,7 +467,8 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
         'Nazwa': w.articleName,
         'Nr Wsadu': w.batchNumber,
         'Ilość': w.quantityWithdrawn,
-        'Konto Systemowe': w.workerName
+        'Konto Systemowe': w.workerName,
+        'Data Eksportu': w.erpExportDate || ''
       }));
     }
 
@@ -430,6 +476,34 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, viewMode === 'AGGREGATED' ? "Pobrania Sumaryczne" : "Historia Pobrań");
     XLSX.writeFile(wb, `Eksport_${viewMode === 'AGGREGATED' ? 'Sumaryczny' : 'Historia'}${startDate ? '_' + startDate : ''}.xlsx`);
+
+    // Mark as exported in database
+    try {
+      const nowStr = new Date().toLocaleString('pl-PL');
+      const batch = writeBatch(db);
+      if (viewMode === 'HISTORY') {
+        listToExport.forEach((w: MaterialWithdrawal) => {
+          if (w.id) {
+            const ref = doc(db, 'materialWithdrawals', w.id);
+            batch.update(ref, { erpExportDate: nowStr });
+          }
+        });
+        setSelectedForExport(new Set()); // clear selection
+      } else {
+        listToExport.forEach((w: any) => {
+          if (w.sourceIds && Array.isArray(w.sourceIds)) {
+            w.sourceIds.forEach((id: string) => {
+              const ref = doc(db, 'materialWithdrawals', id);
+              batch.update(ref, { erpExportDate: nowStr });
+            });
+          }
+        });
+      }
+      await batch.commit();
+      setSelectedForExport(new Set()); // clear selection
+    } catch (error) {
+      console.error('Error updating export date:', error);
+    }
   };
 
   if (loading) return <div className="p-8 text-center text-stone-400 font-bold text-sm">Ładowanie pobrań...</div>;
@@ -465,7 +539,7 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
               </div>
 
               <div className="flex gap-1.5 mt-3 overflow-x-auto custom-scrollbar pb-1">
-                {['ALL', 'RU', 'PR', 'BL', 'FA', 'SR'].map(f => (
+                {['ALL', 'RU', 'PR', 'BL', 'PL', 'FA', 'SR'].map(f => (
                   <button
                     key={f}
                     onClick={() => setMaterialFilter(f as any)}
@@ -624,23 +698,111 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                         <div className="flex flex-col gap-2 border-t border-stone-100 pt-3 mt-1">
                             
                             {guessPrefix(b.articleName || '') !== 'INNE' && guessPrefix(b.articleName || '') !== 'FA' && guessPrefix(b.articleName || '') !== 'SR' ? (
-                              <div className="flex flex-1 gap-1 h-[44px]">
-                                   <input
-                                     type="text"
-                                     inputMode="decimal"
-                                     min="0"
-                                     placeholder="Szt"
-                                     value={(calcValues[b.id as string] || { pieces: '', length: extractLengthFromDimensions(b.dimensions) }).pieces}
-                                     onChange={(e) => handleCalcChange(b.id as string, 'pieces', e.target.value, b)}
-                                     className={cn(
-                                       (guessPrefix(b.articleName || '') === 'BL') ? "w-full px-2 py-1 border rounded-xl text-center font-black text-sm transition-all outline-none min-w-0" : "w-1/2 px-2 py-1 border rounded-xl text-center font-black text-sm transition-all outline-none min-w-0",
-                                       (calcValues[b.id as string]?.pieces) ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
-                                     )}
-                                   />
-                                   
-                                   {guessPrefix(b.articleName || '') !== 'BL' && (
-                                     <>
-                                       <div className="flex items-center text-stone-400 text-xs font-bold px-1">x</div>
+                              <div className="flex flex-col gap-1.5 w-full">
+                                {['BL', 'PL'].includes(guessPrefix(b.articleName || '')) && (
+                                  <div className="flex items-center justify-between w-full px-1">
+                                    <span className="text-[9px] uppercase font-bold text-stone-400 shrink-0">Kalk:</span>
+                                    <div className="text-[10px] font-bold text-stone-500 text-right truncate">
+                                      {(() => {
+                                        const cv = calcValues[b.id as string] || { pieces: '', length: '', width: '', height: '' };
+                                        const p = parseFloat((cv.pieces || '').replace(',', '.'));
+                                        const wStr = cv.width !== undefined ? cv.width : (() => {
+                                          if (b.dimensions) {
+                                            const dimMatch = b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+                                            if (dimMatch && dimMatch[1]) return dimMatch[1].replace(',', '.');
+                                          }
+                                          return '';
+                                        })();
+                                        const hStr = cv.height !== undefined ? cv.height : (() => {
+                                          if (b.dimensions) {
+                                            const dimMatch = b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+                                            if (dimMatch && dimMatch[2]) return dimMatch[2].replace(',', '.');
+                                          }
+                                          return '';
+                                        })();
+                                        const coeffNum = parseFloat(String(b.coefficient || '').replace(/,/g, '.'));
+                                        const w = parseFloat(wStr.replace(',', '.'));
+                                        const h = parseFloat(hStr.replace(',', '.'));
+                                        if (!isNaN(p) && p > 0 && !isNaN(coeffNum) && coeffNum > 0 && !isNaN(w) && w > 0 && !isNaN(h) && h > 0) {
+                                              const m2 = p * (w / 1000) * (h / 1000);
+                                              const kg = m2 * coeffNum;
+                                              return <span title={`${m2.toFixed(3)} m² = ${kg.toFixed(1)} kg`}>{m2.toFixed(3)} m² = {kg.toFixed(1)} kg</span>;
+                                        }
+                                        return null;
+                                      })()}
+                                    </div>
+                                  </div>
+                                )}
+                                <div className="flex flex-1 gap-1 h-[32px] items-center">
+                                  {['BL', 'PL'].includes(guessPrefix(b.articleName || '')) ? (
+                                    <>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        min="0"
+                                        placeholder="Szer(mm)"
+                                        value={calcValues[b.id as string]?.width !== undefined ? calcValues[b.id as string].width : (() => {
+                                          if (b.dimensions) {
+                                            const dimMatch = b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+                                            if (dimMatch && dimMatch[1]) return dimMatch[1].replace(',', '.');
+                                          }
+                                          return '';
+                                        })()}
+                                        onChange={(e) => handleCalcChange(b.id as string, 'width', e.target.value, b)}
+                                        className={cn(
+                                          "flex-1 w-0 px-1 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
+                                          calcValues[b.id as string]?.width || (b.dimensions && b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]/)) ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
+                                        )}
+                                      />
+                                      <div className="flex items-center text-stone-400 text-xs font-bold px-0.5">x</div>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        min="0"
+                                        placeholder="Wys(mm)"
+                                        value={calcValues[b.id as string]?.height !== undefined ? calcValues[b.id as string].height : (() => {
+                                          if (b.dimensions) {
+                                            const dimMatch = b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
+                                            if (dimMatch && dimMatch[2]) return dimMatch[2].replace(',', '.');
+                                          }
+                                          return '';
+                                        })()}
+                                        onChange={(e) => handleCalcChange(b.id as string, 'height', e.target.value, b)}
+                                        className={cn(
+                                          "flex-1 w-0 px-1 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
+                                          calcValues[b.id as string]?.height || (b.dimensions && b.dimensions.match(/[xX×]\s*(\d+(?:[\.,]\d+)?)/)) ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
+                                        )}
+                                      />
+                                      <div className="flex items-center text-stone-400 text-xs font-bold px-0.5">x</div>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        min="0"
+                                        placeholder="Szt"
+                                        value={(calcValues[b.id as string] || { pieces: '' }).pieces}
+                                        onChange={(e) => handleCalcChange(b.id as string, 'pieces', e.target.value, b)}
+                                        className={cn(
+                                          "flex-1 w-0 px-1 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
+                                          calcValues[b.id as string]?.pieces ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
+                                        )}
+                                      />
+                                    </>
+                                  ) : (
+                                    <>
+                                       <input
+                                         type="text"
+                                         inputMode="decimal"
+                                         min="0"
+                                         placeholder="Szt"
+                                         value={(calcValues[b.id as string] || { pieces: '', length: extractLengthFromDimensions(b.dimensions) }).pieces}
+                                         onChange={(e) => handleCalcChange(b.id as string, 'pieces', e.target.value, b)}
+                                         className={cn(
+                                           "flex-1 w-0 px-1 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
+                                           (calcValues[b.id as string]?.pieces) ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
+                                         )}
+                                       />
+                                       
+                                       <div className="flex items-center text-stone-400 text-xs font-bold px-0.5">x</div>
                                        <input
                                          type="text"
                                          inputMode="decimal"
@@ -650,12 +812,13 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                                          value={(calcValues[b.id as string] || { pieces: '', length: extractLengthFromDimensions(b.dimensions) }).length}
                                          onChange={(e) => handleCalcChange(b.id as string, 'length', e.target.value, b)}
                                          className={cn(
-                                           "w-1/2 px-2 py-1 border rounded-xl text-center font-black text-sm transition-all outline-none min-w-0",
+                                           "flex-1 w-0 px-1 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
                                            (calcValues[b.id as string]?.length) ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-stone-50 border-stone-200"
                                          )}
                                         />
-                                     </>
-                                   )}
+                                    </>
+                                  )}
+                                </div>
                               </div>
                             ) : null}
 
@@ -767,13 +930,13 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
           <div className="flex items-center gap-3 w-full sm:w-auto">
             <div className="flex gap-1 p-1 bg-stone-200/50 rounded-xl">
               <button
-                onClick={() => setViewMode('HISTORY')}
+                onClick={() => { setViewMode('HISTORY'); setSelectedForExport(new Set()); }}
                 className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all uppercase ${viewMode === 'HISTORY' ? 'bg-white shadow-sm text-stone-800' : 'text-stone-500 hover:text-stone-700'}`}
               >
                 Historia
               </button>
               <button
-                onClick={() => setViewMode('AGGREGATED')}
+                onClick={() => { setViewMode('AGGREGATED'); setSelectedForExport(new Set()); }}
                 className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all uppercase ${viewMode === 'AGGREGATED' ? 'bg-white shadow-sm text-stone-800' : 'text-stone-500 hover:text-stone-700'}`}
               >
                 Zsumowane
@@ -820,6 +983,19 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                 Wyczyść
               </button>
             )}
+
+            <div className="flex items-center gap-2 ml-0 sm:ml-4 bg-white border border-stone-200 px-3 py-1.5 rounded-lg shadow-sm">
+              <input
+                type="checkbox"
+                id="hideExported"
+                checked={hideExported}
+                onChange={(e) => setHideExported(e.target.checked)}
+                className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+              />
+              <label htmlFor="hideExported" className="text-[10px] font-black uppercase text-stone-600 cursor-pointer select-none">
+                Ukryj wyeksportowane
+              </label>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -846,27 +1022,57 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
 
         <div className="overflow-x-auto">
           {viewMode === 'AGGREGATED' ? (
-            <table className="w-full text-left text-xs whitespace-nowrap table-fixed">
+            <table className="w-full text-left text-xs table-fixed">
               <thead>
                 <tr className="bg-stone-100 border-b border-stone-200 text-[10px] font-black uppercase text-stone-500 select-none">
-                  <th className="p-2 w-32">Artykuł-Nr</th>
-                  <th className="p-2 w-48 lg:w-auto">Nazwa asortymentu</th>
-                  <th className="p-2 w-32">Nr Wsadu</th>
-                  <th className="p-2 w-32 text-right">Suma Netto</th>
-                  <th className="p-2 w-40">Konto logowania</th>
+                  <th className="p-2 w-10 text-center">
+                    <input 
+                      type="checkbox" 
+                      className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      checked={aggregatedWithdrawals.length > 0 && selectedForExport.size === aggregatedWithdrawals.length}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedForExport(new Set(aggregatedWithdrawals.map(w => w.id as string)));
+                        } else {
+                          setSelectedForExport(new Set());
+                        }
+                      }}
+                    />
+                  </th>
+                  <th className="p-2 w-20 sm:w-24">Artykuł-Nr</th>
+                  <th className="p-2 w-auto">Nazwa asortymentu</th>
+                  <th className="p-2 w-24 sm:w-32">Nr Wsadu</th>
+                  <th className="p-2 w-20 sm:w-24 text-right">Suma Netto</th>
+                  <th className="p-2 w-28 sm:w-40">Konto logowania</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100 text-[11px] font-medium text-stone-700">
                 {aggregatedWithdrawals.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-6 text-center text-stone-400 font-normal">Brak operacji w wybranym przedziale czasowym.</td>
+                    <td colSpan={6} className="p-6 text-center text-stone-400 font-normal">Brak operacji w wybranym przedziale czasowym.</td>
                   </tr>
                 ) : (
                   aggregatedWithdrawals.map(w => (
-                    <tr key={w.id} className="hover:bg-stone-50/50 transition-colors">
+                    <tr key={w.id} className={cn("transition-colors", selectedForExport.has(w.id as string) ? "bg-indigo-50/50" : "hover:bg-stone-50/50")}>
+                      <td className="p-2 text-center">
+                        <input 
+                          type="checkbox"
+                          className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                          checked={selectedForExport.has(w.id as string)}
+                          onChange={(e) => {
+                            const newSet = new Set(selectedForExport);
+                            if (e.target.checked) {
+                              newSet.add(w.id as string);
+                            } else {
+                              newSet.delete(w.id as string);
+                            }
+                            setSelectedForExport(newSet);
+                          }}
+                        />
+                      </td>
                       <td className="p-2 font-mono text-stone-500">{w.articleNumber}</td>
-                      <td className="p-2 truncate font-bold text-stone-800" title={w.articleName}>{w.articleName}</td>
-                      <td className="p-2 font-black text-stone-900">{w.batchNumber}</td>
+                      <td className="p-2 font-bold text-stone-800 whitespace-normal leading-tight">{w.articleName}</td>
+                      <td className="p-2 font-black text-stone-900 text-[10px]">{w.batchNumber}</td>
                       <td className={cn(
                         "p-2 text-right font-black text-sm", 
                         w.netQuantity > 0 ? "text-indigo-600" : "text-emerald-600"
@@ -880,26 +1086,57 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
               </tbody>
             </table>
           ) : (
-            <table className="w-full text-left text-xs whitespace-nowrap table-fixed">
+            <table className="w-full text-left text-xs table-fixed">
               <thead>
                 <tr className="bg-stone-100 border-b border-stone-200 text-[10px] font-black uppercase text-stone-500 select-none">
-                  <th className="p-2 w-24">Data</th>
-                  <th className="p-2 w-24">Typ</th>
-                  <th className="p-2 w-32">Artykuł-Nr</th>
-                  <th className="p-2 w-48 lg:w-auto">Nazwa asortymentu</th>
-                  <th className="p-2 w-32">Nr Wsadu</th>
-                  <th className="p-2 w-24 text-right">Ilość</th>
-                  <th className="p-2 w-40">Konto logowania</th>
+                  <th className="p-2 w-8 sm:w-10 text-center">
+                    <input 
+                      type="checkbox" 
+                      className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      checked={filteredHistory.length > 0 && selectedForExport.size === filteredHistory.length}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedForExport(new Set(filteredHistory.map(w => w.id as string)));
+                        } else {
+                          setSelectedForExport(new Set());
+                        }
+                      }}
+                    />
+                  </th>
+                  <th className="p-2 w-16 sm:w-20">Data</th>
+                  <th className="p-2 w-14 sm:w-16">Typ</th>
+                  <th className="p-2 w-20 sm:w-24">Artykuł-Nr</th>
+                  <th className="p-2 w-auto">Nazwa asortymentu</th>
+                  <th className="p-2 w-20 sm:w-24">Nr Wsadu</th>
+                  <th className="p-2 w-16 sm:w-20 text-right">Ilość</th>
+                  <th className="p-2 w-24 sm:w-32">Konto</th>
+                  <th className="p-2 w-20 sm:w-24">Data Eksportu</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100 text-[11px] font-medium text-stone-700">
                 {filteredHistory.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-6 text-center text-stone-400 font-normal">Brak operacji w wybranym przedziale czasowym.</td>
+                    <td colSpan={9} className="p-6 text-center text-stone-400 font-normal">Brak operacji w wybranym przedziale czasowym.</td>
                   </tr>
                 ) : (
                   filteredHistory.map(w => (
-                    <tr key={w.id} className="hover:bg-stone-50/50 transition-colors">
+                    <tr key={w.id} className={cn("transition-colors", selectedForExport.has(w.id as string) ? "bg-indigo-50/50" : "hover:bg-stone-50/50")}>
+                      <td className="p-2 text-center">
+                        <input 
+                          type="checkbox"
+                          className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                          checked={selectedForExport.has(w.id as string)}
+                          onChange={(e) => {
+                            const newSet = new Set(selectedForExport);
+                            if (e.target.checked) {
+                              newSet.add(w.id as string);
+                            } else {
+                              newSet.delete(w.id as string);
+                            }
+                            setSelectedForExport(newSet);
+                          }}
+                        />
+                      </td>
                       <td className="p-2 font-bold text-stone-600">{w.withdrawalDate}</td>
                       <td className="p-2">
                         {w.type === 'WITHDRAWAL' ? (
@@ -909,8 +1146,8 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                         )}
                       </td>
                       <td className="p-2 font-mono text-stone-500">{w.articleNumber}</td>
-                      <td className="p-2 truncate font-bold text-stone-800" title={w.articleName}>{w.articleName}</td>
-                      <td className="p-2 font-black text-stone-900">{w.batchNumber}</td>
+                      <td className="p-2 font-bold text-stone-800 whitespace-normal leading-tight">{w.articleName}</td>
+                      <td className="p-2 font-black text-stone-900 text-[10px]">{w.batchNumber}</td>
                       <td className={cn(
                         "p-2 text-right font-black text-sm", 
                         w.type === 'WITHDRAWAL' ? "text-indigo-600" : "text-emerald-600"
@@ -918,6 +1155,16 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                         {w.type === 'WITHDRAWAL' ? '-' : '+'}{w.quantityWithdrawn}
                       </td>
                       <td className="p-2 font-bold text-stone-600 truncate" title={w.workerName}>{w.workerName}</td>
+                      <td className="p-2 font-bold text-stone-500 text-[10px]">
+                        {w.erpExportDate ? (
+                          <div className="flex flex-col">
+                            <span>{w.erpExportDate.split(', ')[0]}</span>
+                            <span className="text-[9px] text-stone-400">{w.erpExportDate.split(', ')[1]}</span>
+                          </div>
+                        ) : (
+                          ''
+                        )}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -968,7 +1215,7 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                               <span className="font-black text-amber-600 text-sm">{calc.pieces} szt.</span>
                            </div>
                          )}
-                         {calc && calc.length && guessPrefix(batch.articleName || '') !== 'BL' && (
+                         {calc && calc.length && !['BL', 'PL'].includes(guessPrefix(batch.articleName || '')) && (
                            <div className="flex flex-col">
                               <span className="text-[10px] font-bold text-stone-400 uppercase">Długość</span>
                               <span className="font-black text-indigo-600 text-sm">{calc.length} mb</span>

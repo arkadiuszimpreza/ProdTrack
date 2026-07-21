@@ -5,7 +5,7 @@ export const exportToBarTenderExcel = (batches: InventoryBatch[], filename = 'Ek
   // 1. Mapowanie danych 1 do 1 z oryginalnymi nazwami kolumn z pliku "RU PR BL inne"
   const data = batches.map(b => ({
     'Dostawca': b.supplier || '',
-    'Data dostawy': b.deliveryDate || '',
+    'Data dostawy': (b.deliveryDate || '').replace(/-/g, '.'),
     'Nr wsadu': b.batchNumber || '',
     'Indeks': b.articleNumber || '',
     'Nr zamówienia': b.orderNumber || '',

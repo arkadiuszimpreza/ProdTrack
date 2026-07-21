@@ -3,6 +3,7 @@ import { collection, query, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Search, ChevronDown, ChevronUp, Layers } from 'lucide-react';
 import { InventoryBatch, PurchaseOrderItem } from '../../types';
+import { compareMaterialNames } from "../../utils/materialUtils";
 import { cn } from '../../utils/firestore-helpers';
 
 interface ArticleGroup {
@@ -106,7 +107,7 @@ export function ArticleRegistryView() {
       }
     });
 
-    return Object.values(groups).sort((a, b) => a.articleName.localeCompare(b.articleName));
+    return Object.values(groups).sort((a, b) => compareMaterialNames(a.articleName, b.articleName));
   }, [batches, deliveries]);
 
   // 4. WYSZUKIWARKA
