@@ -160,16 +160,19 @@ export function MaterialReservationsView({ readOnly = false }: MaterialReservati
           // Validation to skip totally empty/invalid rows at the end
           if (!gatunek && !material && !idx1 && !idx2) continue;
 
+          const validIdx1 = (idx1 && idx1 !== '0') ? idx1 : '';
+          const validIdx2 = (idx2 && idx2 !== '0') ? idx2 : '';
+
           let targetIndex = '';
           if (gatunek.includes('s355')) {
-            targetIndex = (!idx1 || idx1 === '0') ? idx2 : idx1;
+            targetIndex = validIdx1; // S355: Tylko Indeks 1 (kolumna C), brak fallbacku na Indeks 2
           } else if (gatunek.includes('s235')) {
-            targetIndex = (!idx2 || idx2 === '0') ? idx1 : idx2;
+            targetIndex = validIdx2 || validIdx1; // S235: Głównie Indeks 2 (kolumna D), fallback na Indeks 1 (kolumna C)
           } else {
-            targetIndex = idx1 || idx2;
+            targetIndex = validIdx1 || validIdx2;
           }
 
-          if (!targetIndex || targetIndex === '0') continue; // Skip if no meaningful index
+          if (!targetIndex) continue; // Skip if no meaningful index
 
           const rowQuantities: Record<string, number> = {};
           for (const cons of constructionsList) {
