@@ -137,7 +137,7 @@ export function OrderElementEditor({ order, onClose, onUpdate }: OrderElementEdi
               <Scale size={24} />
             </div>
             <div className="flex-1">
-              <p className="text-sm font-black text-emerald-900">Waga całkowita zlecenia</p>
+              <p className="text-sm font-black text-emerald-900">Waga jednej sztuki artykułu</p>
               <p className="text-[11px] font-bold text-emerald-700 mt-1 uppercase tracking-widest">Dla prac ogólnych (bez podziału na elementy)</p>
             </div>
             <div className="flex items-center gap-2 mt-2 sm:mt-0">

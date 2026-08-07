@@ -3,6 +3,7 @@ import { collection, query, onSnapshot, orderBy, writeBatch, doc, serverTimestam
 import { db } from '../../firebase';
 import { ClipboardCheck, FileSpreadsheet, AlertTriangle, Calendar as CalendarIcon } from 'lucide-react';
 import { InventoryBatch, InventoryAdjustment, InventoryCount } from '../../types';
+import { generateTransactionNumber, buildTransactionData, getSequenceCounter } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 
@@ -111,12 +112,17 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
           draftsToApprove.map(batch => transaction.get(doc(db, 'inventoryBatches', batch.id as string)))
         );
 
-        draftsToApprove.forEach((batch, idx) => {
+        // Odczyt licznika sekwencji PRZED JAKIMIKOLWIEK ZAPISAMI!
+        const seqCounter = await getSequenceCounter(db, transaction);
+
+        for (let idx = 0; idx < draftsToApprove.length; idx++) {
+          const batch = draftsToApprove[idx];
           const snap = batchSnapshots[idx];
-          if (!snap.exists()) return;
+          if (!snap.exists()) continue;
           
           const dbData = snap.data();
           const currentQty = dbData.numericQuantity || 0;
+          const currentWithdrawn = dbData.withdrawnQuantity || 0;
           
           const editedVal = approvalDraftEdits[batch.id as string];
           let countedQty = batch.draftQuantity!;
@@ -145,18 +151,74 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
           });
 
           const batchRef = doc(db, 'inventoryBatches', batch.id as string);
-          const unitLabel = batch.quantityString?.split(' ')[1] || '';
-          
-          transaction.update(batchRef, {
-            numericQuantity: countedQty,
-            quantityString: `${countedQty} ${unitLabel}`.trim(),
-            draftQuantity: null, 
-            draftUpdatedAt: null,
-            draftUpdatedBy: null,
-            lastInventoriedAt: serverTimestamp(),
-            lastInventoriedBy: currentUser
-          });
-        });
+          const unitLabel = batch.quantityString?.split(' ')[1] || batch.unit || 'szt';
+
+          let txRefId = null;
+
+          if (difference !== 0) {
+            const isExcess = difference > 0;
+            const txType = isExcess ? 'PWI' : 'RWI';
+            const absQty = Math.abs(difference);
+
+            let correctionAmount = 0;
+            let newWithdrawnQty = currentWithdrawn;
+
+            if (isExcess && currentWithdrawn > 0) {
+              // PWI: Nadwyżka inwentaryzacyjna zmniejsza historyczne wydanie na produkcję
+              correctionAmount = Number(Math.min(currentWithdrawn, absQty).toFixed(3));
+              newWithdrawnQty = Number(Math.max(0, currentWithdrawn - correctionAmount).toFixed(3));
+            }
+
+            const txNumber = seqCounter.getNextNumber(txType);
+            const txRef = doc(collection(db, 'inventoryTransactions'));
+            txRefId = txRef.id;
+
+            const txData = buildTransactionData({
+              type: txType,
+              batchId: batch.id as string,
+              batchNumber: batch.batchNumber,
+              articleNumber: batch.articleNumber || '',
+              articleName: batch.articleName || '',
+              quantity: absQty,
+              unit: unitLabel,
+              previousBatchQuantity: currentQty,
+              workerName: currentUser,
+              createdBy: currentUser,
+              date: todayStr,
+              notes: isExcess
+                ? `Nadwyżka inwentaryzacyjna PWI (korekta wydania o ${correctionAmount} ${unitLabel})`
+                : `Manko inwentaryzacyjne RWI`,
+              ...(isExcess && correctionAmount > 0 ? { withdrawalCorrectionAmount: correctionAmount } : {})
+            }, txNumber);
+
+            transaction.set(txRef, txData);
+
+            transaction.update(batchRef, {
+              numericQuantity: countedQty,
+              withdrawnQuantity: newWithdrawnQty,
+              quantityString: `${countedQty} ${unitLabel}`.trim(),
+              draftQuantity: null, 
+              draftUpdatedAt: null,
+              draftUpdatedBy: null,
+              lastInventoriedAt: serverTimestamp(),
+              lastInventoriedBy: currentUser,
+              lastTransactionId: txRefId,
+              lastTransactionAt: serverTimestamp()
+            });
+          } else {
+            transaction.update(batchRef, {
+              numericQuantity: countedQty,
+              quantityString: `${countedQty} ${unitLabel}`.trim(),
+              draftQuantity: null, 
+              draftUpdatedAt: null,
+              draftUpdatedBy: null,
+              lastInventoriedAt: serverTimestamp(),
+              lastInventoriedBy: currentUser
+            });
+          }
+        }
+
+        seqCounter.commit(transaction);
       });
 
       // Zarchiwizuj połączone historyczne zliczenia.

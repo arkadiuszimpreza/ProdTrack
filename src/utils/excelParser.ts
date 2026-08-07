@@ -161,6 +161,11 @@ export const parseOrdersExcel = (
               diff.push({ field: 'targetQuantity', label: 'Ilość Planowana', oldValue: existing.targetQuantity, newValue: targetQuantity });
             }
 
+            // Sprawdzanie różnicy w Zlecenie-nr
+            if (erpOrderNumber && existing.erpOrderNumber !== erpOrderNumber) {
+              diff.push({ field: 'erpOrderNumber', label: 'Nr Zlecenia ERP', oldValue: existing.erpOrderNumber, newValue: erpOrderNumber });
+            }
+
             // Sprawdzanie różnicy w kategorii
             const currentCategory = existing.assortmentCategory || 'Inne';
             if (currentCategory !== autoCategory && autoCategory !== 'Inne') {

@@ -17,7 +17,7 @@ export function ReportsView({ employees, orders }: { employees: Employee[], orde
   const [endDate, setEndDate] = useState(format(endOfDay(new Date()), 'yyyy-MM-dd'));
   
   // ZMIANA: Dodano 'audit' do typów
-  const [reportType, setReportType] = useState<'groups' | 'daily_master' | 'work_cards' | 'audit'>('audit');
+  const [reportType, setReportType] = useState<'groups' | 'daily_master' | 'work_cards' | 'audit' | 'oee'>('audit');
   
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [reportData, setReportData] = useState<any[]>([]);
@@ -300,6 +300,45 @@ export function ReportsView({ employees, orders }: { employees: Employee[], orde
         });
         setReportData(Array.from(aggregated.values()));
         setSortField('date');
+} else if (reportType === 'oee') {
+        // Zliczanie czasu na zleceniach z workLogs (tylko ukończone)
+        const workTimes = new Map<string, number>();
+        completedLogs.forEach(log => {
+          const current = workTimes.get(log.userId) || 0;
+          workTimes.set(log.userId, current + (log.duration || 0));
+        });
+        
+        // Pobierz obecności z wybranego miesiąca (na podst. startDate)
+        const startMonth = new Date(start).getMonth() + 1;
+        const startYear = new Date(start).getFullYear();
+        
+        const attQ = query(collection(db, 'attendance'), where('year', '==', startYear), where('month', '==', startMonth));
+        const attSnap = await getDocs(attQ);
+        const attendanceRecords = attSnap.docs.map(d => d.data());
+        
+        const oeeData: any[] = [];
+        
+        employees.forEach(emp => {
+           const att = attendanceRecords.find(a => a.userId === emp.id);
+           const attHours = att ? att.totalHours : 0;
+           const workedSecs = workTimes.get(emp.id) || 0;
+           const workedHours = workedSecs / 3600;
+           const oeePercent = attHours > 0 ? (workedHours / attHours) * 100 : 0;
+           
+           if (attHours > 0 || workedHours > 0) {
+              oeeData.push({
+                 employeeName: `${emp.lastName} ${emp.firstName}`,
+                 group: emp.group || '-',
+                 position: emp.position || '-',
+                 attendanceHours: attHours,
+                 workedHours: workedHours,
+                 oeePercent: oeePercent,
+                 details: att ? JSON.stringify(att.days) : ''
+              });
+           }
+        });
+        setReportData(oeeData);
+        setSortField('oeePercent');
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.LIST, 'workLogs');
@@ -392,6 +431,26 @@ export function ReportsView({ employees, orders }: { employees: Employee[], orde
         });
       });
       fileName = `Karta_Dniowki_Mistrza_${startDate}_${endDate}.xlsx`;
+    } else if (reportType === 'oee') {
+      data = sortedData.map(row => ({
+         'Pracownik': row.employeeName,
+         'Grupa': row.group,
+         'Pobyt z listy obecności (h)': (row.attendanceHours || 0).toFixed(2).replace('.', ','),
+         'Czas z logów zleceń (h)': (row.workedHours || 0).toFixed(2).replace('.', ','),
+         'Wskaźnik OEE (%)': (row.oeePercent || 0).toFixed(1).replace('.', ',')
+       }));
+      fileName = `Eksport_OEE_${startDate}_${endDate}.xlsx`;
+    } else if (reportType === 'groups') {
+      data = sortedData.map(row => ({
+         'Data': row.date.replace(/-/g, '.'),
+         'Imię i Nazwisko': row.employeeName,
+         'Grupa': row.group,
+         'Stanowisko': row.position,
+         'Kategoria': row.category,
+         'Typ meldunku': row.isManual ? 'Ręczny (Mistrz)' : 'Hala (Tablet)',
+        'Liczba godzin': (row.totalDuration / 3600).toFixed(2).replace('.', ',')
+       }));
+      fileName = `Eksport_godzin_na_grupy_${startDate}_${endDate}.xlsx`;
     } else if (reportType === 'groups') {
       data = sortedData.map(row => ({ 
         'Data': row.date.replace(/-/g, '.'), 
@@ -437,6 +496,7 @@ export function ReportsView({ employees, orders }: { employees: Employee[], orde
               <option value="work_cards">📇 Karty Pracy Pracowników (Godziny i Ilości)</option>
               <option value="daily_master">📄 Karta Dniówki dla Mistrza (Z weryfikacją PLN/kg)</option>
               <option value="groups">📊 Eksport godzin na grupy do wskaźników</option>
+              <option value="oee">🎯 OEE - Wykorzystanie czasu na zleceniach (z list obecności)</option>
             </select>
           </div>
 
@@ -709,6 +769,41 @@ export function ReportsView({ employees, orders }: { employees: Employee[], orde
           )}
 
           {/* RENDEROWANIE GRUP */}
+          {reportType === 'oee' && (
+            <div className="bg-white rounded-3xl border border-stone-200 overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-stone-50 border-b border-stone-200">
+                      <th className="p-4 text-xs font-bold uppercase tracking-widest text-stone-400 cursor-pointer hover:text-stone-600" onClick={() => handleSort('employeeName')}>Pracownik <SortIndicator field="employeeName" /></th>
+                      <th className="p-4 text-xs font-bold uppercase tracking-widest text-stone-400 cursor-pointer hover:text-stone-600" onClick={() => handleSort('group')}>Grupa <SortIndicator field="group" /></th>
+                      <th className="p-4 text-xs font-bold uppercase tracking-widest text-stone-400 text-right cursor-pointer hover:text-stone-600" onClick={() => handleSort('attendanceHours')}>Pobyt (Excel) <SortIndicator field="attendanceHours" /></th>
+                      <th className="p-4 text-xs font-bold uppercase tracking-widest text-stone-400 text-right cursor-pointer hover:text-stone-600" onClick={() => handleSort('workedHours')}>Czas Odbity <SortIndicator field="workedHours" /></th>
+                      <th className="p-4 text-xs font-bold uppercase tracking-widest text-stone-400 text-right cursor-pointer hover:text-stone-600" onClick={() => handleSort('oeePercent')}>Wskaźnik % <SortIndicator field="oeePercent" /></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {sortedData.map((row, idx) => (
+                      <tr key={idx} className="hover:bg-stone-50 transition-colors">
+                        <td className="p-4 text-sm font-bold text-stone-800">{row.employeeName}</td>
+                        <td className="p-4 text-sm text-stone-500">{row.group}</td>
+                        <td className="p-4 text-right font-mono font-medium text-stone-600">{(row.attendanceHours || 0).toFixed(2).replace('.', ',')} h</td>
+                        <td className="p-4 text-right font-mono font-medium text-emerald-600">{(row.workedHours || 0).toFixed(2).replace('.', ',')} h</td>
+                        <td className="p-4 text-right font-mono font-black">
+                           <span className={`px-3 py-1 rounded-full ${
+                              row.oeePercent >= 85 ? 'bg-emerald-100 text-emerald-700' : 
+                              row.oeePercent >= 70 ? 'bg-amber-100 text-amber-700' : 
+                              'bg-red-100 text-red-700'}`}>
+                              {(row.oeePercent || 0).toFixed(1).replace('.', ',')}% 
+                           </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           {reportType === 'groups' && (
             <div className="bg-white rounded-3xl border border-stone-200 overflow-hidden shadow-sm">
               <div className="overflow-x-auto">

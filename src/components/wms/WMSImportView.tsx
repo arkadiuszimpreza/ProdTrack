@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Truck, Upload, ShieldCheck, AlertCircle, PackagePlus, ClipboardCheck } from 'lucide-react';
-import { writeBatch, doc, collection, serverTimestamp, getDocs, increment } from 'firebase/firestore';
+import { writeBatch, doc, collection, serverTimestamp, getDocs, increment, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase'; 
 
 import { parseZakupyInfo, parseInventoryBalances, parseArticleRegistry } from '../../utils/inventoryExcelParser';
 import { parseDeliveryTable, matchBatchesWithERP } from '../../utils/deliveryExcelParser';
 import { BatchMatchResult } from '../../types';
 import { BatchMatchSummaryModal } from './BatchMatchSummaryModal';
+import { buildTransactionData } from '../../utils/wmsTransactionService';
 
 interface WMSImportViewProps {
   userRole: string;
@@ -66,6 +67,44 @@ export function WMSImportView({ userRole }: WMSImportViewProps) {
         
         await batchWrite.commit();
       }
+
+      // Kaskadowa aktualizacja cen wsadów na magazynie
+      const priceMapById = new Map<string, number>();
+      const priceMapByPoArt = new Map<string, number>();
+      parsedDeliveries.forEach(item => {
+        if (item.unitPrice !== undefined && item.unitPrice > 0) {
+          priceMapById.set(item.id, item.unitPrice);
+          if (item.purchaseOrderNumber && item.articleNumber) {
+            priceMapByPoArt.set(`${item.purchaseOrderNumber}_${item.articleNumber}`, item.unitPrice);
+          }
+        }
+      });
+
+      for (const batchDoc of inventorySnap.docs) {
+        const bData = batchDoc.data();
+        let newPrice: number | undefined;
+        if (bData.sourcePurchaseOrderId && priceMapById.has(bData.sourcePurchaseOrderId)) {
+          newPrice = priceMapById.get(bData.sourcePurchaseOrderId);
+        } else if (bData.orderNumber && bData.articleNumber && priceMapByPoArt.has(`${bData.orderNumber}_${bData.articleNumber}`)) {
+          newPrice = priceMapByPoArt.get(`${bData.orderNumber}_${bData.articleNumber}`);
+        }
+
+        if (newPrice !== undefined && newPrice > 0 && newPrice !== bData.unitPrice) {
+          const qty = bData.numericQuantity ?? bData.initialQuantity ?? 0;
+          await updateDoc(doc(db, 'inventoryBatches', batchDoc.id), {
+            unitPrice: newPrice,
+            totalValue: Number((qty * newPrice).toFixed(2))
+          });
+        }
+      }
+
+      await setDoc(doc(db, 'systemSettings', 'expectedDeliveriesImport'), {
+        importedAt: serverTimestamp(),
+        importedBy: 'Magazynier ERP',
+        itemCount: parsedDeliveries.length,
+        fileName: file.name
+      });
+
       setImportMessage({ type: 'success', text: `Zaktualizowano listę oczekujących z ERP. Przeliczono "Przyjęto WMS".` });
     } catch (error: any) {
       setImportMessage({ type: 'error', text: error.message });
@@ -137,6 +176,8 @@ export function WMSImportView({ userRole }: WMSImportViewProps) {
       const validResults = matchResults.filter(r => r.matchStatus !== 'DUPLICATE');
       
       const poUpdates: Record<string, { qtyToAdd: number, unitPrice: number }> = {};
+      const year = new Date().getFullYear();
+      const month = String(new Date().getMonth() + 1).padStart(2, '0');
 
       validResults.forEach(res => {
         const newBatchRef = doc(collection(db, 'inventoryBatches'));
@@ -152,6 +193,31 @@ export function WMSImportView({ userRole }: WMSImportViewProps) {
         }
         
         batchWrite.set(newBatchRef, batchData);
+
+        // Utworzenie kwitu PZ w księdze transakcji
+        const txRef = doc(collection(db, 'inventoryTransactions'));
+        const unitLabel = res.batch.unit || res.batch.quantityString?.split(' ')[1] || 'szt';
+        const randomSeq = Math.floor(Math.random() * 9000 + 1000);
+        const txNumber = `PZ/${year}/${month}/${randomSeq}`;
+
+        const txData = buildTransactionData({
+          type: 'PZ',
+          batchId: newBatchRef.id,
+          batchNumber: res.batch.batchNumber,
+          articleNumber: res.batch.articleNumber || '',
+          articleName: res.batch.articleName || '',
+          quantity: res.batch.numericQuantity,
+          unit: unitLabel,
+          unitPrice: batchData.unitPrice || 0,
+          totalValue: batchData.totalValue || Number((res.batch.numericQuantity * (batchData.unitPrice || 0)).toFixed(2)),
+          previousBatchQuantity: 0,
+          workerName: 'Import Dostaw',
+          createdBy: 'Import (Plik)',
+          sourcePurchaseOrderId: res.matchedPurchaseOrder?.id || '',
+          notes: 'Przyjęcie dostawy z pliku (PZ)'
+        }, txNumber);
+
+        batchWrite.set(txRef, txData);
       });
 
       for (const [poId, data] of Object.entries(poUpdates)) {
@@ -164,7 +230,7 @@ export function WMSImportView({ userRole }: WMSImportViewProps) {
       }
 
       await batchWrite.commit();
-      setImportMessage({ type: 'success', text: `Gotowe! Zapisano ${validResults.length} wsadów na Plac i zaktualizowano wyceny.` });
+      setImportMessage({ type: 'success', text: `Gotowe! Zapisano ${validResults.length} wsadów na Plac, wygenerowano kwity PZ i zaktualizowano wyceny.` });
       setShowMatchModal(false);
     } catch (err: any) {
       setImportMessage({ type: 'error', text: err.message });

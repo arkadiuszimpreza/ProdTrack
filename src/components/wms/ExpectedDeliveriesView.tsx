@@ -1,18 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, onSnapshot } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, getDocs, writeBatch, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Search, ArrowUpDown, Truck, ListFilter, CheckCircle } from 'lucide-react';
+import { 
+  Search, ArrowUpDown, Truck, ListFilter, CheckCircle, 
+  Upload, Calendar, User, FileSpreadsheet, CheckCircle2, AlertCircle 
+} from 'lucide-react';
 import { PurchaseOrderItem } from '../../types';
 import { cn } from '../../utils/firestore-helpers';
+import { parseZakupyInfo } from '../../utils/inventoryExcelParser';
 
 type SortKey = keyof PurchaseOrderItem;
 type FilterMode = 'pending_only' | 'all';
 
 interface ExpectedDeliveriesProps {
   onReceiveClick?: (item: any) => void;
+  currentUser?: string;
 }
 
-export function ExpectedDeliveriesView({ onReceiveClick }: ExpectedDeliveriesProps) {
+export function ExpectedDeliveriesView({ onReceiveClick, currentUser }: ExpectedDeliveriesProps) {
   const [deliveries, setDeliveries] = useState<PurchaseOrderItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -25,6 +30,11 @@ export function ExpectedDeliveriesView({ onReceiveClick }: ExpectedDeliveriesPro
     key: 'supplierName', 
     direction: 'asc' 
   });
+
+  // Stany dla importu pliku ERP
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [importMeta, setImportMeta] = useState<{ importedAt?: any; importedBy?: string; itemCount?: number; fileName?: string } | null>(null);
 
   // 1. POBIERANIE DANYCH (Real-time)
   useEffect(() => {
@@ -42,7 +52,148 @@ export function ExpectedDeliveriesView({ onReceiveClick }: ExpectedDeliveriesPro
     return () => unsubscribe();
   }, []);
 
-  // 2. OBSŁUGA SORTOWANIA
+  // 2. POBIERANIE METADANYCH O OSTATNIM IMPORTOWANIU
+  useEffect(() => {
+    const metaRef = doc(db, 'systemSettings', 'expectedDeliveriesImport');
+    const unsubscribe = onSnapshot(metaRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setImportMeta(snapshot.data());
+      }
+    }, (error) => {
+      console.error("Błąd pobierania metadanych importu:", error);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // OBSŁUGA IMPORTU ZAKUPÓW ERP (Zakupy-info)
+  const handleZakupyImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsImporting(true);
+    setImportMessage(null);
+
+    try {
+      const parsedDeliveries = await parseZakupyInfo(file);
+      if (!parsedDeliveries || parsedDeliveries.length === 0) {
+        throw new Error('Plik nie zawiera pozycji zakupów oczekujących dla magazynów MRB/MSN.');
+      }
+
+      // Pobranie zsumowanych dostaw WMS z inventoryBatches
+      const inventorySnap = await getDocs(collection(db, 'inventoryBatches'));
+      const batchesSums: Record<string, number> = {};
+
+      inventorySnap.docs.forEach(docSnap => {
+        const batch = docSnap.data();
+        if (batch.sourcePurchaseOrderId) {
+          const qty = batch.initialQuantity ?? batch.numericQuantity ?? 0;
+          batchesSums[batch.sourcePurchaseOrderId] = (batchesSums[batch.sourcePurchaseOrderId] || 0) + qty;
+        }
+      });
+
+      const CHUNK_SIZE = 450;
+      for (let i = 0; i < parsedDeliveries.length; i += CHUNK_SIZE) {
+        const batchWrite = writeBatch(db);
+        const chunk = parsedDeliveries.slice(i, i + CHUNK_SIZE);
+
+        chunk.forEach(item => {
+          const docRef = doc(collection(db, 'expectedDeliveries'), item.id);
+          const wmsSum = batchesSums[item.id] || 0;
+          const newWmsDeliveredQuantity = wmsSum;
+          const newWmsTotalValue = newWmsDeliveredQuantity * (item.unitPrice || 0);
+
+          const itemToSave = {
+            ...item,
+            wmsDeliveredQuantity: newWmsDeliveredQuantity,
+            wmsTotalValue: newWmsTotalValue,
+            importedAt: serverTimestamp(),
+            lastModifiedAt: serverTimestamp()
+          };
+
+          batchWrite.set(docRef, itemToSave, { merge: true });
+        });
+
+        await batchWrite.commit();
+      }
+
+      // Kaskadowa aktualizacja cen wsadów na magazynie dla zmienionych pozycji ERP
+      const priceMapById = new Map<string, number>();
+      const priceMapByPoArt = new Map<string, number>();
+      parsedDeliveries.forEach(item => {
+        if (item.unitPrice !== undefined && item.unitPrice > 0) {
+          priceMapById.set(item.id, item.unitPrice);
+          if (item.purchaseOrderNumber && item.articleNumber) {
+            priceMapByPoArt.set(`${item.purchaseOrderNumber}_${item.articleNumber}`, item.unitPrice);
+          }
+        }
+      });
+
+      for (const batchDoc of inventorySnap.docs) {
+        const bData = batchDoc.data();
+        let newPrice: number | undefined;
+        if (bData.sourcePurchaseOrderId && priceMapById.has(bData.sourcePurchaseOrderId)) {
+          newPrice = priceMapById.get(bData.sourcePurchaseOrderId);
+        } else if (bData.orderNumber && bData.articleNumber && priceMapByPoArt.has(`${bData.orderNumber}_${bData.articleNumber}`)) {
+          newPrice = priceMapByPoArt.get(`${bData.orderNumber}_${bData.articleNumber}`);
+        }
+
+        if (newPrice !== undefined && newPrice > 0 && newPrice !== bData.unitPrice) {
+          const qty = bData.numericQuantity ?? bData.initialQuantity ?? 0;
+          await updateDoc(doc(db, 'inventoryBatches', batchDoc.id), {
+            unitPrice: newPrice,
+            totalValue: Number((qty * newPrice).toFixed(2))
+          });
+        }
+      }
+
+      // Zapis metadanych o imporcie (kto i kiedy)
+      const importerName = currentUser || 'Użytkownik WMS';
+      await setDoc(doc(db, 'systemSettings', 'expectedDeliveriesImport'), {
+        importedAt: serverTimestamp(),
+        importedBy: importerName,
+        itemCount: parsedDeliveries.length,
+        fileName: file.name
+      });
+
+      setImportMessage({
+        type: 'success',
+        text: `Pomyślnie zaimportowano ${parsedDeliveries.length} pozycji z pliku ERP.`
+      });
+    } catch (error: any) {
+      console.error('Błąd importu zakupy ERP:', error);
+      setImportMessage({
+        type: 'error',
+        text: error.message || 'Błąd przetwarzania pliku ERP'
+      });
+    } finally {
+      setIsImporting(false);
+      e.target.value = '';
+    }
+  };
+
+  const formatImportDate = (dateVal: any) => {
+    if (!dateVal) return 'Brak danych';
+    let d: Date;
+    if (dateVal?.toDate) {
+      d = dateVal.toDate();
+    } else if (dateVal?.seconds) {
+      d = new Date(dateVal.seconds * 1000);
+    } else if (typeof dateVal === 'string' || typeof dateVal === 'number') {
+      d = new Date(dateVal);
+    } else {
+      return 'Brak danych';
+    }
+    if (isNaN(d.getTime())) return 'Brak danych';
+    return d.toLocaleString('pl-PL', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  // 3. OBSŁUGA SORTOWANIA
   const handleSort = (key: SortKey) => {
     setSortConfig(prev => ({
       key,
@@ -50,7 +201,7 @@ export function ExpectedDeliveriesView({ onReceiveClick }: ExpectedDeliveriesPro
     }));
   };
 
-  // 3. FILTROWANIE I SORTOWANIE
+  // 4. FILTROWANIE I SORTOWANIE
   const processedDeliveries = useMemo(() => {
     let result = [...deliveries];
 
@@ -102,6 +253,68 @@ export function ExpectedDeliveriesView({ onReceiveClick }: ExpectedDeliveriesPro
 
   return (
     <div className="space-y-3">
+      {/* SEKCJA IMPORTU ERP Z SYSTEMU ORAZ DANE O OSTATNIM IMPORCIE */}
+      <div className="bg-white p-3 rounded-xl border border-stone-200 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className={cn(
+            "px-4 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-2 cursor-pointer select-none shrink-0",
+            isImporting && "opacity-75 cursor-not-allowed pointer-events-none"
+          )}>
+            <Upload size={15} />
+            <span>{isImporting ? 'Importowanie ERP...' : 'Importuj zakupy info (ERP)'}</span>
+            <input 
+              type="file" 
+              accept=".csv, .xlsx, .xls" 
+              onChange={handleZakupyImport} 
+              disabled={isImporting} 
+              className="hidden" 
+            />
+          </label>
+
+          {importMessage && (
+            <div className={cn(
+              "text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5",
+              importMessage.type === 'success' ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-red-50 text-red-800 border border-red-200"
+            )}>
+              {importMessage.type === 'success' ? <CheckCircle2 size={14} className="text-emerald-600" /> : <AlertCircle size={14} className="text-red-600" />}
+              <span>{importMessage.text}</span>
+            </div>
+          )}
+        </div>
+
+        {/* INFORMACJE O OSTATNIM IMPORTOWANIU PLIKU */}
+        <div className="flex flex-wrap items-center gap-3 text-xs text-stone-600 bg-stone-50 px-3.5 py-2 rounded-lg border border-stone-200 w-full md:w-auto">
+          <div className="flex items-center gap-1.5">
+            <Calendar size={14} className="text-stone-400" />
+            <span className="text-stone-500 font-medium">Data importu:</span>
+            <span className="font-bold text-stone-900">
+              {importMeta?.importedAt ? formatImportDate(importMeta.importedAt) : 'Brak danych'}
+            </span>
+          </div>
+
+          <span className="text-stone-300 hidden sm:inline">|</span>
+
+          <div className="flex items-center gap-1.5">
+            <User size={14} className="text-stone-400" />
+            <span className="text-stone-500 font-medium">Zaimportował:</span>
+            <span className="font-bold text-stone-900">
+              {importMeta?.importedBy || 'Brak danych'}
+            </span>
+          </div>
+
+          {importMeta?.itemCount !== undefined && (
+            <>
+              <span className="text-stone-300 hidden sm:inline">|</span>
+              <div className="flex items-center gap-1.5">
+                <FileSpreadsheet size={14} className="text-stone-400" />
+                <span className="text-stone-500 font-medium">Pozycji:</span>
+                <span className="font-bold text-stone-900">{importMeta.itemCount}</span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* PASEK NARZĘDZIOWY */}
       <div className="bg-white p-2 rounded-xl border border-stone-200 shadow-sm flex flex-col sm:flex-row gap-2 items-center justify-between">
         <div className="flex items-center flex-1 w-full">

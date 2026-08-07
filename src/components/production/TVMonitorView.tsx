@@ -26,13 +26,7 @@ export function TVMonitorView({ activeLogs, orders }: TVMonitorViewProps) {
     return () => clearInterval(interval);
   }, []);
 
-  // Odświeżanie strony co 5 minut
-  useEffect(() => {
-    const refreshInterval = setInterval(() => {
-      window.location.reload();
-    }, 5 * 60 * 1000);
-    return () => clearInterval(refreshInterval);
-  }, []);
+  // Remove manual reload, onSnapshot handles realtime updates seamlessly
 
   const getLiveSeconds = (start: any) => {
     if (!start) return 0;

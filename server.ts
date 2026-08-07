@@ -89,18 +89,30 @@ function calculateBoardMaterials(elements: any[]): any[] {
     }
   });
 
-  const pagesMap: Record<number, any[]> = {};
+  // Grupowanie elementów po tablicach (POZ lub strona + szerokość)
+  const boardGroups: Record<string, any[]> = {};
   elements.forEach(el => {
-    const p = el.page || 1;
-    if (!pagesMap[p]) pagesMap[p] = [];
-    pagesMap[p].push(el);
+    const key = el.detectedPoz ? `poz_${el.detectedPoz.trim().toLowerCase()}` : `page_${el.page || 1}_w_${el.width || 0}`;
+    if (!boardGroups[key]) boardGroups[key] = [];
+    boardGroups[key].push(el);
   });
 
   const calculatedElements: any[] = [];
 
-  for (const [pStr, pageEls] of Object.entries(pagesMap)) {
-    // Sortowanie od góry do dołu rysunku (Y malejące)
-    const sorted = [...pageEls].sort((a, b) => b.y - a.y);
+  for (const [boardKey, boardEls] of Object.entries(boardGroups)) {
+    // Sortowanie elementów w obrębie tablicy od góry do dołu:
+    // 1. Domyślnie po 'verticalIndexFromTop' jeśli podany
+    // 2. Jeśli nie, po wyciągniętym numerze Y lub numerze EPS w nazwie
+    const sorted = [...boardEls].sort((a, b) => {
+      if (a.verticalIndexFromTop && b.verticalIndexFromTop) {
+        return a.verticalIndexFromTop - b.verticalIndexFromTop;
+      }
+      if (a.y !== 0 && b.y !== 0) {
+        return b.y - a.y; // Y malejące (wyżej w PDF = większe Y)
+      }
+      return 0;
+    });
+
     const N = sorted.length;
 
     for (let i = 0; i < N; i++) {
@@ -109,6 +121,21 @@ function calculateBoardMaterials(elements: any[]): any[] {
       const h = (el.height || 0) / 1000;
 
       const area = w * h;
+
+      // Określenie pozycji pionowej (top, bottom, middle, single)
+      let finalPos: 'top' | 'middle' | 'bottom' | 'single' = 'middle';
+
+      if (N === 1) {
+        finalPos = 'single';
+      } else {
+        if (el.verticalPosition && ['top', 'middle', 'bottom', 'single'].includes(el.verticalPosition.toLowerCase())) {
+          finalPos = el.verticalPosition.toLowerCase() as any;
+        } else {
+          if (i === 0) finalPos = 'top';
+          else if (i === N - 1) finalPos = 'bottom';
+          else finalPos = 'middle';
+        }
+      }
 
       // Profile: 2 profile szerokości, chyba że wysokość <= 300 mm, wtedy 1 profil
       let profiles = 0;
@@ -122,34 +149,32 @@ function calculateBoardMaterials(elements: any[]): any[] {
       }
 
       // Ramki i Zamki:
-      // - 1 panel: ramka z 4 stron, 0 zamków
-      // - wielopanelowe:
-      //   - górny (i=0): ramka z 3 stron (góra, lewo, prawo), 1 zamek (dół)
-      //   - dolny (i=N-1): ramka z 3 stron (dół, lewo, prawo), 1 zamek (góra)
-      //   - środkowy: ramka z 2 stron (lewo, prawo), 2 zamki (góra, dół)
+      // - 'single' (1 panel): ramka z 4 stron (2*w + 2*h), 0 zamków
+      // - 'top' (górny panel): ramka z 3 stron (w + 2*h), 1 zamek (1*w)
+      // - 'bottom' (dolny panel): ramka z 3 stron (w + 2*h), 1 zamek (1*w)
+      // - 'middle' (środkowy panel): ramka z 2 stron (2*h), 2 zamki (2*w)
       let frame = 0;
       let locks = 0;
 
       if (w > 0 && h > 0) {
-        if (N === 1) {
+        if (finalPos === 'single') {
           frame = 2 * w + 2 * h;
           locks = 0;
-        } else {
-          if (i === 0) {
-            frame = w + 2 * h;
-            locks = w;
-          } else if (i === N - 1) {
-            frame = w + 2 * h;
-            locks = w;
-          } else {
-            frame = 2 * h;
-            locks = 2 * w;
-          }
+        } else if (finalPos === 'top') {
+          frame = w + 2 * h;
+          locks = w;
+        } else if (finalPos === 'bottom') {
+          frame = w + 2 * h;
+          locks = w;
+        } else if (finalPos === 'middle') {
+          frame = 2 * h;
+          locks = 2 * w;
         }
       }
 
       calculatedElements.push({
         ...el,
+        verticalPosition: finalPos,
         areaSquareMeters: parseFloat(area.toFixed(3)),
         profilesLength: parseFloat(profiles.toFixed(3)),
         locksLength: parseFloat(locks.toFixed(3)),
@@ -179,7 +204,7 @@ function getGeminiApiKey(): string | undefined {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT || "3000", 10);
 
   app.use(express.json());
 
@@ -226,8 +251,17 @@ async function startServer() {
                 name: { type: "string" },
                 detectedDimension: { type: "string" },
                 detectedPoz: { type: "string" },
-                width: { type: "integer", description: "Szerokość pojedynczego panelu (EPS) w milimetrach (mm), np. 5700" },
-                height: { type: "integer", description: "Wysokość pojedynczego panelu (EPS) w milimetrach (mm), np. 1200 lub 400" }
+                width: { type: "integer", description: "Szerokość pojedynczego panelu (EPS) w milimetrach (mm), np. 5700 lub 3300" },
+                height: { type: "integer", description: "Wysokość pojedynczego panelu (EPS) w milimetrach (mm), np. 1200 lub 400 lub 300" },
+                verticalPosition: { 
+                  type: "string", 
+                  enum: ["top", "middle", "bottom", "single"],
+                  description: "Pozycja pionowa panelu w konstrukcji tablicy: 'top' dla górnego paska na samej górze, 'bottom' dla dolnego paska na samym dole, 'middle' dla paska środkowego, 'single' jeśli tablica składa się z 1 panelu." 
+                },
+                verticalIndexFromTop: { 
+                  type: "integer", 
+                  description: "Numer kolejny paska EPS na danej tablicy od góry do dołu, zaczynając od 1 dla najwyższego panelu na górze (1 = top, 2 = kolejny, ..., max = bottom)." 
+                }
               },
               required: ["id", "name"]
             }
@@ -238,13 +272,20 @@ async function startServer() {
       };
 
       const prompt = `Przeanalizuj dołączony plik PDF (Rysunek Ofertowy / Zlecenie Produkcyjne). 
-Wyodrębnij z niego informacje o znakach/tablicach (panelach EPS). Dla każdego panelu EPS na rysunku znajdź:
+Wyodrębnij z niego informacje o znakach/tablicach drogowych (panelach EPS). Dla każdego panelu EPS na rysunku znajdź:
 1. Nazwę (najczęściej w formacie "eps.X" np. "eps.1", "eps.2", "eps.7").
-2. Przypisany wymiar (np. "2700x400mm", "1200x5700mm" lub pojedyncze wymiary wysokości np. "400", "1200"). Zwróć to w polu 'detectedDimension'.
+2. Przypisany wymiar (np. "2700x400mm", "1200x5700mm" lub pojedyncze wymiary wysokości np. "300", "400", "1200"). Zwróć to w polu 'detectedDimension'.
 3. Numer pozycji (POZ), np. "POZ.10", "POZ.20". Zwróć to w polu 'detectedPoz'.
-4. Dokładną szerokość panelu w mm jako liczbę całkowitą (np. 5700) w polu 'width'. Uwaga: Panele na tej samej tablicy mają wspólną szerokość (np. u dołu tablicy jest podana łączna szerokość np. 5700, a paski mają tę samą szerokość).
-5. Dokładną wysokość panelu w mm jako liczbę całkowitą (np. 1200, 400) w polu 'height'. Te wartości najczęściej są rozpisane z prawej strony każdego paska (np. 400, 1200, 1200, 1200).
-Zwróć wynik jako JSON z tablicą 'elements', gdzie każdy element to jeden znak z tymi danymi. Dodatkowo podaj 'pageCount' jako liczbę stron rysunku (jeśli się da ocenić).
+4. Dokładną szerokość panelu w mm jako liczbę całkowitą (np. 5700, 3300) w polu 'width'. Uwaga: Panele na tej samej tablicy mają wspólną szerokość (np. u dołu tablicy jest podana łączna szerokość np. 5700 lub 3300, a paski w składzie danej tablicy mają tę samą szerokość).
+5. Dokładną wysokość panelu w mm jako liczbę całkowitą (np. 1200, 400, 300) w polu 'height'. Te wartości najczęściej są rozpisane z prawej strony każdego paska (np. 300, 1200, 1200).
+6. Określ fizyczną pozycję pionową (układ od góry do dołu) każdego paska w konstrukcji danej tablicy / POZ:
+   - 'top': pasek na samej górze tablicy.
+   - 'bottom': pasek na samym dole / podstawie tablicy.
+   - 'middle': pasek środkowy umieszczony pomiędzy paskiem górnym a dolnym.
+   - 'single': jeśli tablica składa się tylko z jednego panelu EPS.
+   W polu 'verticalIndexFromTop' podaj numer kolejny paska od góry do dołu (1 = góra, 2 = drugi od góry, itd.).
+
+Zwróć wynik jako JSON z tablicą 'elements', gdzie każdy element to jeden znak z tymi danymi. Dodatkowo podaj 'pageCount' jako liczbę stron rysunku.
 Wygeneruj poprawne losowe ID dla każdego elementu np "eps_1_p1_x"
 Niech wynik odpowiada podanemu schematowi.`;
 

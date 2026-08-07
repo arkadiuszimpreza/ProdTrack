@@ -24,6 +24,8 @@ export interface OrderElement {
   weight: number;
   /** Ilość elementów do produkcji */
   quantity?: number;
+  /** Nazwa operacji technologicznej (jeśli dotyczy) */
+  operationName?: string;
   /** Zaraportowana ilość */
   reportedQuantity?: number;
 }
@@ -45,14 +47,14 @@ export interface ProductionOrder {
   targetQuantity: number;
   /**waga zleceń nie składających się z elementów */
   totalWeight?: number;
-  
+
   /** Ilość już zaraportowana (Stare pole, zachowane dla kompatybilności wstecznej) */
-  reportedQuantity?: number; 
+  reportedQuantity?: number;
   /** NOWE: Ilość potwierdzona z systemu ERP (Tylko z importu Excel) */
   erpReportedQuantity?: number;
   /** NOWE: Ilość wyprodukowana i zaraportowana fizycznie na hali (tablety/wpis ręczny) */
   appReportedQuantity?: number;
-  
+
   /** Aktualny status zlecenia */
   status: 'pending' | 'in-progress' | 'reported' | 'completed';
   /** Numer artykułu/indeks produktu */
@@ -112,6 +114,8 @@ export interface WorkLog {
   quantityReported?: number;
   /** Ilość (alias dla quantityReported) */
   quantity?: number;
+  /** Nazwa operacji technologicznej (jeśli dotyczy) */
+  operationName?: string;
   /** Kategoria asortymentowa przypisana do tego wpisu */
   assortmentCategory?: string;
   /** ID konkretnego elementu zlecenia (jeśli wybrano) */
@@ -168,6 +172,8 @@ export interface WorkSession {
   startTime: any;
   /** Czas zakończenia sesji */
   endTime?: any;
+  /** Czas ostatniego częściowego meldunku (np. tablice) */
+  lastReportTime?: any;
   /** Status sesji */
   status: 'active' | 'completed';
   /** Lista identyfikatorów pracowników należących do zespołu */
@@ -199,6 +205,10 @@ export interface Employee {
   rfidCard?: string;
   /** Unikalny kod karty RFID (alias) */
   rfidCardId?: string;
+  /** Domyślne stanowisko (miejsce powstawania kosztów) */
+  defaultWorkstationId?: string;
+  /** Czy pracownik jest zarchiwizowany (ukryty) */
+  isArchived?: boolean;
   /** Data dodania pracownika do systemu */
   createdAt?: any;
 }
@@ -209,6 +219,25 @@ export type UserRole = 'admin' | 'worker' | 'operator' | 'magazynier' | 'operato
  * Profil użytkownika systemu (osoby logującej się przez Google).
  * Określa uprawnienia w aplikacji.
  */
+
+/**
+ * Rekord obecności pracownika w danym miesiącu.
+ * Dane pochodzą z zewnętrznego pliku Excel.
+ */
+export interface AttendanceRecord {
+  id: string; // np. userId_YYYY_MM
+  userId: string; // referencja do Employee.id
+  employeeNumber: string; // rcpNumber / nr ewidencyjny do celów łaczenia
+  year: number;
+  month: number; // 1-12
+  days: {
+    [day: number]: number | string; // np. 8 (godziny), 'U', 'CH', 'KR', 'w'
+  };
+  totalHours: number; // Suma przepracowanych godzin (zwykłych)
+  createdAt: any; // Firestore Timestamp
+  updatedAt?: any; // Firestore Timestamp
+}
+
 export interface UserProfile {
   /** Unikalny identyfikator użytkownika (Firebase UID) */
   uid: string;
@@ -310,34 +339,36 @@ export type PurchaseOrderStatus = 'OPEN' | 'PARTIAL' | 'COMPLETED' | 'OVERDELIVE
 
 export interface PurchaseOrderItem {
   id: string; // Wygenerowany klucz np. "PO-27821-110"
-  
+
   // Identyfikacja
   purchaseOrderNumber: string; // "Proces-nr"
   positionNumber: string; // "Poz.-nr"
   supplierName: string; // "Nazwa" (Dostawca)
   warehouse: string; // "Magazyn" (np. MRB)
-  
+
   // Asortyment
   articleNumber: string; // "Artykuł-nr"
   articleName: string; // "Nazwa" (Artykułu)
   projectNumber: string; // "Projekt-nr" lub "ZP-nr"
-  
+
   // Ilości
   quantityOrdered: number; // "Ilość"
   quantityDelivered: number; // "Dostarczone"
   quantityRemaining: number; // Obliczone: Ilość - Dostarczone
   unit: string; // "JM"
-  
+
   // Finanse (Dla wyceny WIP i Magazynu)
   unitPrice?: number;
+  priceUnit?: string;
+  priceUnitMultiplier?: number;
   wmsTotalValue?: number; // Wartość fizycznie przyjętego towaru
   wmsDeliveredQuantity?: number;
   currency?: string; // "Waluta" (np. PLN)
-  
+
   // Daty
   orderDate: string; // "Założono"
   expectedDeliveryDate: string; // "Data dostawy"
-  
+
   status: PurchaseOrderStatus;
   importedAt: any; // Timestamp
   rozliczone?: number;
@@ -356,7 +387,7 @@ export type BatchStatus = 'AVAILABLE' | 'IN_PRODUCTION' | 'CONSUMED';
 
 export interface InventoryBatch {
   id?: string; // Będzie nadane przez Firebase
-  
+
   // Dane z Tabeli Dostaw (dla BarTendera)
   supplier: string; // Dostawca
   deliveryDate: string; // Data dostawy (YYYY-MM-DD)
@@ -368,27 +399,29 @@ export interface InventoryBatch {
   coefficient: string; // Współczynnik
   dimensions: string; // Wymiar/ Długość
   quantityString: string; // Pełny tekst np. "1080 mb"
-  
+
   // Zdekodowana ilość do obliczeń
-  numericQuantity: number; 
+  numericQuantity: number;
   unit?: string; // e.g. "kg", "mb"
-  
+
   // Kontrola Jakości
   labelsCount: number; // liczba etykiet
   qcCard: boolean; // Karta kontroli (x)
   certificate: boolean; // ATESTY (x)
   notes: string; // UWAGI
-  
+
   // Relacje
   sourcePurchaseOrderId?: string; // Po połączeniu z Zakupy-info!
   status: BatchStatus;
-  
+
   // Metadane
   createdAt?: any;
   createdBy?: string;
 
   // Finanse
   unitPrice?: number;
+  priceUnit?: string;
+  priceUnitMultiplier?: number;
   totalValue?: number; // Wartość tego konkretnego wsadu
 
   initialQuantity?: number;   // Ile oryginalnie przyszło z dostawy
@@ -401,6 +434,53 @@ export interface InventoryBatch {
   // Inwentaryzacja
   lastInventoriedAt?: any;
   lastInventoriedBy?: string;
+
+  // Log Transakcyjny ERP
+  lastTransactionId?: string;
+  lastTransactionAt?: any;
+}
+
+export type InventoryTransactionType = 'PZ' | 'RW' | 'PW' | 'RWI' | 'PWI' | 'BO';
+
+export interface InventoryTransaction {
+  id?: string;
+  transactionNumber: string;         // np. "PZ/2026/07/0001", "RW/2026/07/0012"
+  type: InventoryTransactionType;     // PZ | RW | PW | RWI | PWI | BO
+  sign: 1 | -1;                       // +1 dla przychodów, -1 dla rozchodów
+
+  batchId: string;                    // ID dokumentu w inventoryBatches
+  batchNumber: string;                // Nr wsadu (np. 26RU042)
+  articleNumber: string;              // Indeks ERP (np. SZR00035)
+  articleName: string;                // Nazwa asortymentu
+
+  quantity: number;                   // Bezwzględna ilość operacji (zawsze > 0)
+  signedQuantity: number;             // Ilość ze znakiem: quantity * sign (np. -12.5 lub +12.5)
+  unit: string;                       // Jednostka miary (kg, mb, szt, m2)
+
+  previousBatchQuantity: number;      // Stan wsadu PRZED transakcją
+  newBatchQuantity: number;           // Stan wsadu PO transakcji
+
+  unitPrice?: number;                 // Cena jednostkowa PLN
+  totalValue?: number;                // Wartość transakcji PLN (quantity * unitPrice)
+
+  workerName: string;                 // Osoba zgłaszająca / wykonująca
+  createdBy: string;                  // UID lub email użytkownika
+  createdAt: any;                     // Firestore serverTimestamp()
+  date: string;                       // Data w formacie YYYY-MM-DD
+
+  // Specjalne pola dla PWI (Nadwyżka z korektą historycznego wydania RW)
+  adjustedTransactionId?: string;     // ID transakcji RW, której wydanie zostaje pomniejszone
+  adjustedWithdrawalId?: string;      // ID z materialWithdrawals (współistnienie)
+  withdrawalCorrectionAmount?: number;// Kwota o jaką pomniejszono wydanie produkcyjne
+
+  // Pola pomocnicze i audytowe
+  calculatorDetails?: string;         // Wymiary z kalkulatora np. "1200 x 2000 x 2"
+  sourcePurchaseOrderId?: string;     // ID powiązanego PO z Zakupy-info
+  purchaseOrderNumber?: string;       // Nr zlecenia/zamówienia zakupu (np. 30042)
+  orderNumber?: string;               // Nr zamówienia
+  relatedDocumentId?: string;         // ID powiązanego dokumentu (np. RW przy zwrocie PW)
+  notes?: string;                     // Uwagi/powód korekty
+  erpExportDate?: string;             // Data eksportu do ERP
 }
 
 export interface InventoryCount {
@@ -440,14 +520,14 @@ export interface MaterialWithdrawal {
 
 export interface InventoryAdjustment {
   id?: string;
-  date: string;           
-  batchId: string;        
-  batchNumber: string;    
-  articleNumber: string;  
-  articleName: string;    
-  oldQuantity: number;    
-  newQuantity: number;    
-  difference: number;     
+  date: string;
+  batchId: string;
+  batchNumber: string;
+  articleNumber: string;
+  articleName: string;
+  oldQuantity: number;
+  newQuantity: number;
+  difference: number;
   approvedBy: string;     // Kierownik / Menedżer
   countedBy?: string;     // <--- DODAJ TO: Pracownik, który fizycznie zliczył
   createdAt: any;

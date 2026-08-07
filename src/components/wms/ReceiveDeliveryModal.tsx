@@ -236,7 +236,11 @@ export function ReceiveDeliveryModal({ item, onClose, onSave }: Props) {
         qcCard: formData.qcCard,
         certificate: formData.certificate,
         notes: formData.notes,
-        status: 'AVAILABLE'
+        status: 'AVAILABLE',
+        unitPrice: item.unitPrice || 0,
+        priceUnit: item.priceUnit || '1',
+        priceUnitMultiplier: item.priceUnitMultiplier || 1,
+        totalValue: Number((parsedQty * (item.unitPrice || 0)).toFixed(2))
       };
 
       await onSave(batchData);

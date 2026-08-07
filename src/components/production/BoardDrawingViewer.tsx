@@ -2,16 +2,18 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { BoardDrawing, BoardDrawingElement } from '../../types';
-import { FlipVertical, FlipHorizontal, RotateCw } from 'lucide-react';
+import { FlipVertical, FlipHorizontal, RotateCw, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 interface Props {
+  selectedElementIds?: string[];
   drawing: BoardDrawing;
   onElementClick: (element: BoardDrawingElement) => void;
+  completedOperations?: Record<string, string[]>;
 }
 
-export function BoardDrawingViewer({ drawing, onElementClick }: Props) {
+export function BoardDrawingViewer({ drawing, onElementClick, selectedElementIds = [], completedOperations = {} }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -23,6 +25,8 @@ export function BoardDrawingViewer({ drawing, onElementClick }: Props) {
   const [flipY, setFlipY] = useState(false);
   const [flipX, setFlipX] = useState(false);
   const [rotation, setRotation] = useState(0);
+  const [zoom, setZoom] = useState(1);
+  const [baseScale, setBaseScale] = useState(1);
 
   const renderTaskRef = useRef<any>(null);
 
@@ -53,16 +57,28 @@ export function BoardDrawingViewer({ drawing, onElementClick }: Props) {
     }
   };
 
-  const renderPage = async (num: number, pdf: any = pdfDoc) => {
+  const renderPage = async (num: number, pdf: any = pdfDoc, currentZoom: number = zoom) => {
     if (!pdf || !canvasRef.current || !containerRef.current) return;
     
     try {
       const page = await pdf.getPage(num);
       
-      // Dopasuj skalę do szerokości kontenera
       const containerWidth = containerRef.current.clientWidth;
+      const containerHeight = containerRef.current.clientHeight;
       const unscaledViewport = page.getViewport({ scale: 1.0 });
-      const scale = containerWidth / unscaledViewport.width;
+      let calculatedBaseScale = baseScale;
+      
+      // Calculate base scale only once per page load to fit screen
+      if (currentZoom === 1) {
+        calculatedBaseScale = Math.min(
+          (containerWidth - 32) / unscaledViewport.width,
+          (containerHeight - 32) / unscaledViewport.height
+        );
+        if (calculatedBaseScale <= 0) calculatedBaseScale = 1;
+        setBaseScale(calculatedBaseScale);
+      }
+      
+      const scale = calculatedBaseScale * currentZoom;
       
       const vp = page.getViewport({ scale });
       setViewport(vp);
@@ -105,10 +121,17 @@ export function BoardDrawingViewer({ drawing, onElementClick }: Props) {
     }
   };
 
+    useEffect(() => {
+    if (pdfDoc) {
+      renderPage(currentPage, pdfDoc, zoom);
+    }
+  }, [zoom]);
+
   const changePage = (offset: number) => {
     const newPage = currentPage + offset;
     if (newPage > 0 && newPage <= pageCount) {
-      renderPage(newPage);
+      setZoom(1);
+      renderPage(newPage, pdfDoc, 1);
     }
   };
 
@@ -119,17 +142,74 @@ export function BoardDrawingViewer({ drawing, onElementClick }: Props) {
     return { cx: pts[0], cy: pts[1] };
   };
 
+
+  const getPieChartStyle = (element: BoardDrawingElement, completedOps: string[] = []) => {
+    const isMultiPanel = (element.locksLength || 0) > 0;
+    const totalOps = isMultiPanel ? 5 : 4;
+    const opNames = isMultiPanel 
+      ? ['Wycinanie tab WS', 'Wklejanie zamków', 'Wklejanie profila tablicy WS', 'Oklejanie tab WS', 'Oprawanie tablic']
+      : ['Wycinanie tab WS', 'Wklejanie profila tablicy WS', 'Oklejanie tab WS', 'Oprawanie tablic'];
+    
+    const step = 100 / totalOps;
+    let gradient = 'conic-gradient(';
+    
+    opNames.forEach((opName, index) => {
+      const isCompleted = completedOps.includes(opName);
+      // We will use semi-transparent background to let the canvas show through?
+      // Actually, since it's a marker, we can use a solid color but we can add a border to separate slices.
+      // A conic-gradient doesn't support borders between slices easily, but we can fake it with transparent gaps if we want.
+      // Let's use simple colors.
+      const color = isCompleted ? '#10b981' : 'rgba(255,255,255,0.8)';
+      const start = index * step;
+      const end = (index + 1) * step;
+      // Add a tiny gap by adjusting percentages? No, let's keep it simple.
+      gradient += `${color} ${start}%, ${color} ${end}%`;
+      if (index < opNames.length - 1) gradient += ', ';
+    });
+    gradient += ')';
+    
+    return { background: gradient };
+  };
+
   // Build the CSS transform for the container
   const transformStyle = `rotate(${rotation}deg) scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1})`;
 
   return (
-    <div className="relative border border-stone-200 rounded-2xl overflow-hidden bg-stone-100 p-4">
+    <div className="relative border border-stone-200 rounded-2xl overflow-hidden bg-stone-100 p-4 h-full flex flex-col min-h-0">
       {/* Controls */}
       <div className="flex flex-wrap justify-between items-center mb-4 gap-4">
         <h3 className="font-bold text-stone-800">Podgląd Rysunku</h3>
         
         <div className="flex items-center gap-2">
           {/* Transform Controls */}
+          
+          {/* Zoom Controls */}
+          <div className="flex gap-1 bg-white p-1 border border-stone-200 rounded-lg shadow-sm mr-2">
+            <button 
+              onClick={() => setZoom(z => Math.max(0.5, z - 0.25))}
+              className="p-2 rounded-md text-stone-500 hover:bg-stone-100 transition-colors"
+              title="Oddal"
+            >
+              <ZoomOut size={18} />
+            </button>
+            <span className="flex items-center justify-center text-xs font-bold text-stone-500 w-12">
+              {Math.round(zoom * 100)}%
+            </span>
+            <button 
+              onClick={() => setZoom(z => Math.min(4, z + 0.25))}
+              className="p-2 rounded-md text-stone-500 hover:bg-stone-100 transition-colors"
+              title="Przybliż"
+            >
+              <ZoomIn size={18} />
+            </button>
+            <button 
+              onClick={() => setZoom(1)}
+              className="p-2 rounded-md text-stone-500 hover:bg-stone-100 transition-colors border-l border-stone-200 ml-1 pl-2"
+              title="Dopasuj do ekranu"
+            >
+              <Maximize size={18} />
+            </button>
+          </div>
           <div className="flex gap-1 bg-white p-1 border border-stone-200 rounded-lg shadow-sm mr-2">
             <button 
               onClick={() => setFlipY(!flipY)}
@@ -175,14 +255,14 @@ export function BoardDrawingViewer({ drawing, onElementClick }: Props) {
         </div>
       </div>
 
-      <div ref={containerRef} className="relative w-full flex justify-center bg-stone-200/50 shadow-inner border border-stone-200 rounded-lg overflow-auto p-4 min-h-[400px]">
+      <div ref={containerRef} className="relative w-full flex-1 flex justify-center items-center bg-stone-200/50 shadow-inner border border-stone-200 rounded-lg overflow-auto p-4 min-h-0">
         {/* Transform Container - applies to BOTH canvas and overlay markers */}
         <div 
           className="relative origin-center transition-transform duration-300" 
           style={{ 
             transform: transformStyle,
             width: viewport ? `${viewport.width}px` : 'auto',
-            maxWidth: '100%'
+            
           }}
         >
           <canvas ref={canvasRef} className="block w-full bg-white shadow-md" />
@@ -197,9 +277,15 @@ export function BoardDrawingViewer({ drawing, onElementClick }: Props) {
               <button
                 key={element.id}
                 onClick={() => onElementClick(element)}
-                className="absolute transform -translate-x-1/2 -translate-y-1/2 w-8 h-8 md:w-12 md:h-12 rounded-full border-4 border-emerald-500 bg-emerald-500/20 hover:bg-emerald-500/60 flex items-center justify-center transition-all shadow-lg group cursor-pointer z-10"
-                style={{ left: `${leftPercent}%`, top: `${topPercent}%` }}
+                className={`absolute transform -translate-x-1/2 -translate-y-1/2 w-8 h-8 md:w-12 md:h-12 rounded-full border-2 flex items-center justify-center transition-all shadow-lg group cursor-pointer z-10 ${selectedElementIds.includes(element.id) ? 'border-emerald-600 scale-110 shadow-emerald-500/50 ring-4 ring-emerald-300' : 'border-stone-400 hover:scale-105'}`}
+                style={{ 
+                  left: `${leftPercent}%`, 
+                  top: `${topPercent}%`,
+                  ...getPieChartStyle(element, completedOperations[element.id] || [])
+                }}
               >
+                {/* Inner white circle to make it look like a donut chart */}
+                <div className="w-1/2 h-1/2 bg-white rounded-full absolute shadow-inner" />
                 {/* 
                   To keep the tooltip readable regardless of canvas flip/rotation, 
                   we reverse the transform on the tooltip 

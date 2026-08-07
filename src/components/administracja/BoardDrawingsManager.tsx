@@ -62,11 +62,15 @@ export function BoardDrawingsManager({ orders, userProfile }: Props) {
 
       if (!response.ok) {
         let errorDetails = response.statusText;
-        try {
-          const errorJson = await response.json();
-          errorDetails = errorJson.details || errorJson.error || response.statusText;
-        } catch(e) {}
-        throw new Error(`Błąd serwera: ${errorDetails}`);
+        if (response.status === 404) {
+          errorDetails = "Endpoint '/api/parse-pdf' zwraca 404. W hostingach statycznych (np. Firebase Hosting bez Cloud Run/Functions) brak serwera Node.js. Wymagane uruchomienie backendu Express (server.ts).";
+        } else {
+          try {
+            const errorJson = await response.json();
+            errorDetails = errorJson.details || errorJson.error || response.statusText;
+          } catch(e) {}
+        }
+        throw new Error(`Błąd serwera (${response.status}): ${errorDetails}`);
       }
 
       const parsed = await response.json();
@@ -448,12 +452,9 @@ export function BoardDrawingsManager({ orders, userProfile }: Props) {
                     >
                       <option value="">-- Wybierz Zlecenie Produkcyjne --</option>
                       {orders
-                        // Filtrujemy zlecenia np. po numerze zlecenia klienta z rysunku 
-                        // Można też po prostu pokazać wszystkie pending/in-progress i pozwolić wyszukać
-                        .filter(o => o.status !== 'completed')
                         .map(o => (
                           <option key={o.id} value={o.id}>
-                            {o.orderNumber} - {o.productName} ({o.targetQuantity} szt.)
+                            {o.orderNumber} - {o.productName} ({o.targetQuantity} szt.){o.status === 'completed' ? ' [Zakończone ERP]' : ''}
                           </option>
                         ))
                       }

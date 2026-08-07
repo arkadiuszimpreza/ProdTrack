@@ -3,6 +3,7 @@ import { collection, query, onSnapshot, orderBy, doc, serverTimestamp, runTransa
 import { db } from '../../firebase';
 import { Search, RotateCcw, FileSpreadsheet, User, ClipboardList, X, PackageMinus } from 'lucide-react';
 import { InventoryBatch, MaterialWithdrawal } from '../../types';
+import { generateTransactionNumber, buildTransactionData, getSequenceCounter } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 
@@ -207,6 +208,9 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
           }
         }
 
+        // Odczyt licznika sekwencji transakcji W FAZIE READ (przed jakimikolwiek zapisami!)
+        const seqCounter = await getSequenceCounter(db, transaction);
+
         const newReturnRef = doc(collection(db, 'materialWithdrawals'));
         const returnData: MaterialWithdrawal = {
           withdrawalDate: todayStr,
@@ -234,14 +238,38 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
           
           const newBatchQty = Number((currentQty + returnQty).toFixed(3));
           const newWithdrawnQty = Number(Math.max(0, currentWithdrawn - returnQty).toFixed(3)); 
-          const unitLabel = batchData.quantityString?.split(' ')[1] || '';
+          const unitLabel = batchData.quantityString?.split(' ')[1] || batchData.unit || 'szt';
+
+          // Tworzenie oficjalnego kwitu ERP PW (Przychód Wewnętrzny) z numeru sekwencji pobranego w fazie READ
+          const txNumber = seqCounter.getNextNumber('PW');
+          const txRef = doc(collection(db, 'inventoryTransactions'));
+          const txData = buildTransactionData({
+            type: 'PW',
+            batchId: yardSnap!.id!,
+            batchNumber: withdrawalData.batchNumber,
+            articleNumber: withdrawalData.articleNumber || '',
+            articleName: withdrawalData.articleName || '',
+            quantity: returnQty,
+            unit: unitLabel,
+            previousBatchQuantity: currentQty,
+            workerName: currentUser,
+            createdBy: currentUser,
+            date: todayStr,
+            relatedDocumentId: withdrawalRef.id,
+            sourcePurchaseOrderId: withdrawalData.sourcePurchaseOrderId || ''
+          }, txNumber);
+          transaction.set(txRef, txData);
           
           transaction.update(batchRef, {
             numericQuantity: newBatchQty,
             withdrawnQuantity: newWithdrawnQty,
-            quantityString: `${newBatchQty} ${unitLabel}`
+            quantityString: `${newBatchQty} ${unitLabel}`,
+            lastTransactionId: txRef.id,
+            lastTransactionAt: serverTimestamp()
           });
         }
+
+        seqCounter.commit(transaction);
       });
       
       closeReturnModal();

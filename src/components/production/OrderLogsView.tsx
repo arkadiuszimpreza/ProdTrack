@@ -74,6 +74,76 @@ export function OrderLogsView({ order, orders, employees, onClose }: OrderLogsVi
 
   const [logSource, setLogSource] = useState<'all' | 'hall' | 'manual'>('all');
   const [expandedElements, setExpandedElements] = useState<Set<string>>(new Set());
+  const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
+  const [isDeletingMultiple, setIsDeletingMultiple] = useState(false);
+  const [confirmMultiDeleteDialog, setConfirmMultiDeleteDialog] = useState(false);
+  
+  const toggleLogSelection = (logId: string) => {
+    if (!logId) return;
+    setSelectedLogIds(prev => {
+      const next = new Set(prev);
+      if (next.has(logId)) next.delete(logId);
+      else next.add(logId);
+      return next;
+    });
+  };
+
+  const toggleAllSelection = () => {
+    if (selectedLogIds.size > 0 && selectedLogIds.size === sortedLogs.length) {
+      setSelectedLogIds(new Set());
+    } else {
+      setSelectedLogIds(new Set(sortedLogs.map(l => l.id!).filter(Boolean)));
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedLogIds.size === 0) return;
+    setConfirmMultiDeleteDialog(true);
+  };
+
+  const executeDeleteSelected = async () => {
+    setConfirmMultiDeleteDialog(false);
+    setIsDeletingMultiple(true);
+    try {
+      await runTransaction(db, async (transaction) => {
+        // Obliczamy ile odjąć od quantity ordera
+        let totalQuantityToRemove = 0;
+        
+        for (const logId of Array.from(selectedLogIds)) {
+          const log = logs.find(l => l.id === logId);
+          if (log && log.quantityReported) {
+             totalQuantityToRemove += log.quantityReported;
+          }
+        }
+        
+        if (totalQuantityToRemove > 0) {
+          const orderRef = doc(db, 'orders', order.id);
+          const orderSnap = await transaction.get(orderRef);
+          if (orderSnap.exists()) {
+            const currentQty = orderSnap.data().appReportedQuantity || 0;
+            const newAppQty = Math.max(0, currentQty - totalQuantityToRemove);
+            const newStatus = calculateOrderStatus(orderSnap.data().erpReportedQuantity || 0, newAppQty, orderSnap.data().targetQuantity);
+            transaction.update(orderRef, { appReportedQuantity: newAppQty, status: newStatus });
+          }
+        }
+
+        for (const logId of Array.from(selectedLogIds)) {
+          const logRef = doc(db, 'workLogs', logId);
+          transaction.delete(logRef);
+        }
+      });
+      
+      // Update local state without re-fetching
+      setLogs(prev => prev.filter(l => !l.id || !selectedLogIds.has(l.id)));
+      setSelectedLogIds(new Set());
+    } catch (err) {
+      console.error(err);
+      alert('Wystąpił błąd podczas usuwania meldunków.');
+    } finally {
+      setIsDeletingMultiple(false);
+    }
+  };
+
 
   const toggleElement = (key: string) => {
     setExpandedElements(prev => {
@@ -538,7 +608,19 @@ export function OrderLogsView({ order, orders, employees, onClose }: OrderLogsVi
 
             {/* TABELA INDYWIDUALNYCH MELDUNKÓW */}
             <div className="space-y-1.5">
-              <h3 className="text-sm font-bold text-stone-700 ml-1">Szczegółowa lista meldunków:</h3>
+              <div className="flex items-center justify-between ml-1 mb-2">
+                <h3 className="text-sm font-bold text-stone-700">Szczegółowa lista meldunków:</h3>
+                {selectedLogIds.size > 0 && (
+                  <button 
+                    onClick={handleDeleteSelected}
+                    disabled={isDeletingMultiple}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-bold transition-colors"
+                  >
+                    <Trash2 size={14} />
+                    {isDeletingMultiple ? "Usuwanie..." : `Usuń zaznaczone (${selectedLogIds.size})`}
+                  </button>
+                )}
+              </div>
               {sortedLogs.length === 0 ? (
                 <div className="bg-white border-2 border-dashed border-stone-200 rounded-3xl p-12 text-center text-stone-400">
                   <AlertCircle size={40} className="mx-auto mb-4 text-stone-300" />
@@ -551,6 +633,14 @@ export function OrderLogsView({ order, orders, employees, onClose }: OrderLogsVi
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-stone-50 border-b border-stone-200">
+                          <th className="p-4 w-12 text-center">
+                            <input 
+                              type="checkbox" 
+                              className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-stone-300 cursor-pointer"
+                              checked={sortedLogs.length > 0 && selectedLogIds.size === sortedLogs.length}
+                              onChange={toggleAllSelection}
+                            />
+                          </th>
                           <th className="p-4 text-xs font-bold uppercase tracking-widest text-stone-400 cursor-pointer hover:text-stone-600 transition-colors" onClick={() => handleSort('userName')}>
                             Pracownik <SortIndicator field="userName" />
                           </th>
@@ -579,6 +669,14 @@ export function OrderLogsView({ order, orders, employees, onClose }: OrderLogsVi
 
                           return (
                             <tr key={log.id} className={cn("hover:bg-stone-50 transition-colors", isOngoing && "bg-emerald-50/30")}>
+                              <td className="p-4 text-center">
+                                <input 
+                                  type="checkbox" 
+                                  className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-stone-300 cursor-pointer"
+                                  checked={!!log.id && selectedLogIds.has(log.id)}
+                                  onChange={() => log.id && toggleLogSelection(log.id)}
+                                />
+                              </td>
                               <td className="p-4">
                                 <div className="flex items-center gap-2">
                                   <div className="w-8 h-8 bg-stone-100 rounded-full flex items-center justify-center text-stone-500"><UserIcon size={14} /></div>
@@ -648,9 +746,38 @@ export function OrderLogsView({ order, orders, employees, onClose }: OrderLogsVi
         )}
       </div>
 
-      <AnimatePresence>
+            <AnimatePresence>
         {editingLog && <EditLogModal log={editingLog} orders={orders} onClose={() => setEditingLog(null)} />}
       </AnimatePresence>
+
+      {confirmMultiDeleteDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-stone-900 mb-2">Potwierdzenie usunięcia</h3>
+              <p className="text-stone-600">
+                Czy na pewno chcesz usunąć {selectedLogIds.size} zaznaczonych meldunków? Ta operacja jest nieodwracalna.
+              </p>
+            </div>
+            <div className="bg-stone-50 p-4 border-t border-stone-100 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmMultiDeleteDialog(false)}
+                className="px-4 py-2 font-bold text-stone-600 bg-white border border-stone-200 hover:bg-stone-50 rounded-xl transition-colors"
+                disabled={isDeletingMultiple}
+              >
+                Anuluj
+              </button>
+              <button
+                onClick={executeDeleteSelected}
+                className="px-4 py-2 font-bold text-white bg-red-600 hover:bg-red-500 rounded-xl transition-colors shadow-sm"
+                disabled={isDeletingMultiple}
+              >
+                {isDeletingMultiple ? "Usuwanie..." : "Usuń"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

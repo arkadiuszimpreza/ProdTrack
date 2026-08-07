@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, doc } from 'firebase/firestore';
 import { User as FirebaseUser } from 'firebase/auth';
 
 import { db } from '../firebase'; 
@@ -8,6 +8,7 @@ import { handleFirestoreError, OperationType } from '../utils/firestore-helpers'
 
 // ZMIANA 1: Dodajemy parametr currentOperator (żeby Dyspozytor wiedział, kto odbił kartę)
 export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, currentOperator: Employee | null) {
+  const [systemMetadata, setSystemMetadata] = useState<any>(null);
   const [orders, setOrders] = useState<ProductionOrder[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [workStations, setWorkStations] = useState<WorkStation[]>([]);
@@ -46,23 +47,31 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
     return () => { unsubscribeUser(); unsubscribeAll(); };
   }, [user, currentOperator]); // ZMIANA 3: Hook reaguje za każdym razem, gdy ktoś odbije/zabierze kartę RFID
 
-  // 2. Nasłuchiwanie Zleceń (Orders) - ZOPTYMALIZOWANE (Active Working Set)
+  // 2. Nasłuchiwanie Zleceń (Orders)
   useEffect(() => {
     if (!user) return;
-    
-    // TWARDA BLOKADA: Pobieramy tylko zlecenia aktywne. 
-    // Zlecenia zakończone (completed) nie obciążają już pamięci i odczytów.
+        
+    // Optymalizacja: Pobieramy tylko AKTYWNE zlecenia (bez zakończonych).
+    // Zlecenia archiwalne są wczytywane na żądanie (np. przez wpisanie 6 cyfr w formularzach).
+    // Redukuje to drastycznie ilość odczytów (reads) z bazy w czasie działania aplikacji (szczególnie przez weekend).
     const q = query(
       collection(db, 'orders'), 
-      where('status', 'in', ['pending', 'in-progress', 'reported']),
-      orderBy('createdAt', 'desc')
+      where('status', 'in', ['pending', 'in-progress', 'reported'])
     );
-    
+        
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const ordersData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as ProductionOrder[];
+      
+      // Sortowanie po stronie klienta, żeby nie wymuszać tworzenia złożonego indeksu (Composite Index) w Firestore
+      ordersData.sort((a, b) => {
+        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+        return timeB - timeA;
+      });
+      
       setOrders(ordersData);
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'orders'));
-    
+        
     return () => unsubscribe();
   }, [user]);
 
@@ -102,6 +111,19 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
     return () => unsubscribe();
   }, [user]);
 
+  // 6. Nasłuchiwanie Metadanych Systemu
+  useEffect(() => {
+    if (!user) return;
+    const unsubscribe = onSnapshot(doc(db, "system", "metadata"), (docSnap) => {
+      if (docSnap.exists()) {
+        setSystemMetadata(docSnap.data());
+      } else {
+        setSystemMetadata(null);
+      }
+    }, (err) => handleFirestoreError(err, OperationType.LIST, "system/metadata"));
+    return () => unsubscribe();
+  }, [user]);
+
   // Dyspozytor oddaje gotową teczkę z danymi do Dyrektora
   return {
     orders,
@@ -110,6 +132,7 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
     activeSessions,
     activeLog,
     setActiveLog, 
-    allActiveLogs
+    allActiveLogs,
+    systemMetadata
   };
 }

@@ -4,6 +4,7 @@ import { db } from '../../firebase';
 import { Edit2, Trash2, X, Save, Search, History } from 'lucide-react';
 import { InventoryBatch } from '../../types';
 import { cn } from '../../utils/firestore-helpers';
+import { getSequenceCounter, buildTransactionData } from '../../utils/wmsTransactionService';
 
 export function ManualReceiptsView() {
   const [batches, setBatches] = useState<InventoryBatch[]>([]);
@@ -33,9 +34,16 @@ export function ManualReceiptsView() {
   }, []);
 
   const handleDelete = async (batch: InventoryBatch) => {
-    if (!window.confirm(`Czy na pewno usunąć wsad ${batch.batchNumber}? Ta operacja cofnie ilość z WMS w tabeli dostaw.`)) return;
+    if (!window.confirm(`Czy na pewno usunąć wsad ${batch.batchNumber}? Ta operacja cofnie ilość z WMS w tabeli dostaw oraz usunie wpis transakcji.`)) return;
 
     try {
+      // Pobieramy powiązane backupy oraz transakcje przed rozpoczęciem transakcji
+      const backupQ = query(collection(db, 'wmsReceiptsBackup'), where('batchId', '==', batch.id!));
+      const backupSnap = await getDocs(backupQ);
+
+      const txQ = query(collection(db, 'inventoryTransactions'), where('batchId', '==', batch.id!));
+      const txSnap = await getDocs(txQ);
+
       await runTransaction(db, async (transaction) => {
         const batchRef = doc(db, 'inventoryBatches', batch.id!);
         let poRef = null;
@@ -49,9 +57,6 @@ export function ManualReceiptsView() {
           }
         }
 
-        const backupQ = query(collection(db, 'wmsReceiptsBackup'), where('batchId', '==', batch.id!));
-        const backupSnap = await getDocs(backupQ); // We can still do a read query outside of transaction state in getDocs, but to be robust, just do it.
-
         if (poRef && poData) {
           const newTotalQty = Math.max(0, Number(((poData.wmsDeliveredQuantity || 0) - (batch.numericQuantity || 0)).toFixed(3)));
           const newTotalValue = newTotalQty * (poData.unitPrice || 0);
@@ -64,6 +69,9 @@ export function ManualReceiptsView() {
         transaction.delete(batchRef);
         backupSnap.forEach(bDoc => {
           transaction.delete(bDoc.ref);
+        });
+        txSnap.forEach(tDoc => {
+          transaction.delete(tDoc.ref);
         });
       });
 
@@ -101,6 +109,14 @@ export function ManualReceiptsView() {
       }
       const qtyDiff = newQty - oldQty;
 
+      // Szukamy istniejącej transakcji PZ dla tego wsadu
+      const txQ = query(
+        collection(db, 'inventoryTransactions'),
+        where('batchId', '==', editingBatch.id!),
+        where('type', '==', 'PZ')
+      );
+      const txSnap = await getDocs(txQ);
+
       await runTransaction(db, async (transaction) => {
         const batchRef = doc(db, 'inventoryBatches', editingBatch.id!);
         let poRef = null;
@@ -114,6 +130,44 @@ export function ManualReceiptsView() {
           }
         }
         
+        const unitLabel = editData.quantityString?.split(' ')[1] || editingBatch.unit || 'szt';
+
+        if (!txSnap.empty) {
+          txSnap.forEach(tDoc => {
+            transaction.update(tDoc.ref, {
+              batchNumber: editData.batchNumber,
+              dimensions: editData.dimensions || '',
+              quantity: newQty,
+              signedQuantity: newQty,
+              newBatchQuantity: newQty,
+              unit: unitLabel,
+              notes: editData.notes || 'Edycja ręcznego przyjęcia (PZ)'
+            });
+          });
+        } else {
+          // Brak starego wpisu PZ -> generujemy nowy wpis kwitu PZ
+          const seqCounter = await getSequenceCounter(db, transaction);
+          const txNumber = seqCounter.getNextNumber('PZ');
+          seqCounter.commit(transaction);
+
+          const txRef = doc(collection(db, 'inventoryTransactions'));
+          const txData = buildTransactionData({
+            type: 'PZ',
+            batchId: editingBatch.id!,
+            batchNumber: editData.batchNumber,
+            articleNumber: editingBatch.articleNumber || '',
+            articleName: editingBatch.articleName || '',
+            quantity: newQty,
+            unit: unitLabel,
+            previousBatchQuantity: 0,
+            workerName: editingBatch.createdBy || 'Magazynier',
+            createdBy: editingBatch.createdBy || 'Magazynier',
+            sourcePurchaseOrderId: editingBatch.sourcePurchaseOrderId || '',
+            notes: editData.notes || 'Ręczna aktualizacja dostawy (PZ)'
+          }, txNumber);
+          transaction.set(txRef, txData);
+        }
+
         transaction.update(batchRef, {
           batchNumber: editData.batchNumber,
           dimensions: editData.dimensions,

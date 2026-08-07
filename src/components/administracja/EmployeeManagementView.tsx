@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { UserPlus, Trash2, Upload, Plus, AlertTriangle, X, CheckCircle2, AlertCircle, Save, Pencil } from 'lucide-react';
+import { UserPlus, Trash2, Upload, Plus, AlertTriangle, X, CheckCircle2, AlertCircle, Save, Pencil, Archive, ArchiveRestore } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Employee } from '../../types';
+import { Employee, WorkStation } from '../../types';
 
 export function EmployeeManagementView({
   employees,
+  workStations,
   onAdd,
   onDelete,
   onUpdate,
@@ -15,6 +16,7 @@ export function EmployeeManagementView({
   onClearAll
 }: {
   employees: Employee[],
+  workStations?: WorkStation[],
   onAdd: (data: Omit<Employee, 'id' | 'displayName'>) => Promise<boolean>,
   onDelete: (id: string) => Promise<boolean>,
   onUpdate: (id: string, data: Partial<Employee>) => Promise<boolean>,
@@ -30,19 +32,25 @@ export function EmployeeManagementView({
   const [group, setGroup] = useState('');
   const [position, setPosition] = useState('');
   const [rfidCard, setRfidCard] = useState('');
+  const [defaultWorkstationId, setDefaultWorkstationId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<Employee>>({});
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+
+  const activeEmployees = employees.filter(emp => !emp.isArchived);
+  const archivedEmployees = employees.filter(emp => emp.isArchived);
+  const displayedEmployees = showArchived ? archivedEmployees : activeEmployees;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!firstName || !lastName) return;
 
     setIsSubmitting(true);
-    const success = await onAdd({ employeeNumber, firstName, lastName, group, position, rfidCard });
+    const success = await onAdd({ employeeNumber, firstName, lastName, group, position, rfidCard, defaultWorkstationId: defaultWorkstationId || undefined });
     if (success) {
       setEmployeeNumber('');
       setFirstName('');
@@ -50,6 +58,7 @@ export function EmployeeManagementView({
       setGroup('');
       setPosition('');
       setRfidCard('');
+      setDefaultWorkstationId('');
       setShowAddForm(false);
     }
     setIsSubmitting(false);
@@ -77,12 +86,36 @@ export function EmployeeManagementView({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-4 items-center justify-between">
-        <h2 className="text-2xl font-black text-stone-900 flex items-center gap-3">
-          <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center">
-            <UserPlus size={20} />
+        <div className="flex flex-col gap-2">
+          <h2 className="text-2xl font-black text-stone-900 flex items-center gap-3">
+            <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center">
+              <UserPlus size={20} />
+            </div>
+            Zarządzanie Pracownikami
+          </h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowArchived(false)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${
+                !showArchived 
+                  ? 'bg-stone-900 text-white shadow-md' 
+                  : 'bg-stone-100 text-stone-500 hover:bg-stone-200'
+              }`}
+            >
+              Aktualni ({activeEmployees.length})
+            </button>
+            <button
+              onClick={() => setShowArchived(true)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${
+                showArchived 
+                  ? 'bg-stone-900 text-white shadow-md' 
+                  : 'bg-stone-100 text-stone-500 hover:bg-stone-200'
+              }`}
+            >
+              Zarchiwizowani ({archivedEmployees.length})
+            </button>
           </div>
-          Zarządzanie Pracownikami
-        </h2>
+        </div>
         
         <div className="flex gap-3">
           {employees.length > 0 && (
@@ -207,7 +240,7 @@ export function EmployeeManagementView({
             className="overflow-hidden"
           >
             <div className="bg-white p-6 rounded-3xl border border-stone-100 shadow-xl mb-6">
-              <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+              <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-7">
                 <div className="space-y-1">
                   <label className="text-[10px] font-black uppercase tracking-wider text-stone-400 ml-1">Nr ewidencyjny</label>
                   <input 
@@ -264,7 +297,20 @@ export function EmployeeManagementView({
                     placeholder="Przyłóż kartę..."
                   />
                 </div>
-                <div className="sm:col-span-2 lg:col-span-6 flex justify-end gap-3 mt-2">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-stone-400 ml-1">Dom. Stanowisko (MPK)</label>
+                  <select
+                    value={defaultWorkstationId}
+                    onChange={(e) => setDefaultWorkstationId(e.target.value)}
+                    className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm"
+                  >
+                    <option value="">Brak (wybierz)</option>
+                    {workStations?.map(ws => (
+                      <option key={ws.id} value={ws.id}>{ws.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="sm:col-span-2 lg:col-span-7 flex justify-end gap-3 mt-2">
                   <button 
                     type="button"
                     onClick={() => setShowAddForm(false)}
@@ -295,21 +341,22 @@ export function EmployeeManagementView({
                 <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Imię i Nazwisko</th>
                 <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Grupa</th>
                 <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Stanowisko</th>
+                <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Dom. Stanowisko (MPK)</th>
                 <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Karta RFID</th>
                 <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400 text-right">Akcje</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
-              {employees.length === 0 ? (
+              {displayedEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-12 text-center text-stone-400">
+                  <td colSpan={7} className="p-12 text-center text-stone-400">
                     <UserPlus size={48} className="mx-auto mb-4 opacity-10" />
-                    <p>Brak pracowników w systemie.</p>
-                    <p className="text-xs">Dodaj ręcznie lub zaimportuj z pliku Excel.</p>
+                    <p>{showArchived ? 'Brak zarchiwizowanych pracowników.' : 'Brak pracowników w systemie.'}</p>
+                    {!showArchived && <p className="text-xs">Dodaj ręcznie lub zaimportuj z pliku Excel.</p>}
                   </td>
                 </tr>
               ) : (
-                employees.map(emp => (
+                displayedEmployees.map(emp => (
                   <tr key={emp.id} className="hover:bg-stone-50/50 transition-colors group">
                     <td className="p-4 text-sm font-medium text-stone-500">
                       {editingId === emp.id ? (
@@ -372,6 +419,22 @@ export function EmployeeManagementView({
                         />
                       ) : (
                         emp.position || '—'
+                      )}
+                    </td>
+                    <td className="p-4 text-sm text-stone-600 font-medium">
+                      {editingId === emp.id ? (
+                        <select
+                          value={editData.defaultWorkstationId || ''}
+                          onChange={(e) => setEditData({ ...editData, defaultWorkstationId: e.target.value })}
+                          className="w-full p-1 text-xs border border-stone-200 rounded bg-white"
+                        >
+                          <option value="">Brak (wybierz)</option>
+                          {workStations?.map(ws => (
+                            <option key={ws.id} value={ws.id}>{ws.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        workStations?.find(ws => ws.id === emp.defaultWorkstationId)?.name || '—'
                       )}
                     </td>
                     <td className="p-4 text-sm text-stone-600 font-medium">
@@ -439,7 +502,8 @@ export function EmployeeManagementView({
                                   lastName: emp.lastName,
                                   group: emp.group,
                                   position: emp.position,
-                                  rfidCard: emp.rfidCard
+                                  rfidCard: emp.rfidCard,
+                                  defaultWorkstationId: emp.defaultWorkstationId
                                 });
                               }}
                               className="p-2 text-stone-300 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
@@ -447,10 +511,17 @@ export function EmployeeManagementView({
                             >
                               <Pencil size={18} />
                             </button>
+                            <button
+                              onClick={() => onUpdate(emp.id, { isArchived: !emp.isArchived })}
+                              className="p-2 text-stone-300 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                              title={emp.isArchived ? "Przywróć pracownika" : "Zarchiwizuj pracownika"}
+                            >
+                              {emp.isArchived ? <ArchiveRestore size={18} /> : <Archive size={18} />}
+                            </button>
                             <button 
                               onClick={() => setDeletingId(emp.id)}
                               className="p-2 text-stone-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                              title="Usuń pracownika"
+                              title="Usuń pracownika (trwale)"
                             >
                               <Trash2 size={18} />
                             </button>

@@ -3,11 +3,11 @@ import {
   Package, Clock, Search, X, Trash2, Upload, List, AlertTriangle, 
   CheckCircle2, LogOut, Info, Settings, Settings2, LayoutList, Boxes, History, 
   Activity, BarChart2, PenTool, Users, Briefcase, FileText, Menu, ChevronRight,
-  Truck, BookOpen, PackageMinus, ClipboardCheck, PackagePlus, RotateCcw, Archive, FileSpreadsheet, Weight
+  Truck, BookOpen, PackageMinus, ClipboardCheck, PackagePlus, RotateCcw, Archive, FileSpreadsheet, Weight, Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInSeconds } from 'date-fns';
-import { Timestamp, doc, updateDoc, collection, query, where, or, getDocs, writeBatch, arrayRemove, serverTimestamp, increment } from 'firebase/firestore'; 
+import { Timestamp, doc, updateDoc, collection, query, where, or, getDocs, writeBatch, arrayRemove, serverTimestamp, increment, runTransaction } from 'firebase/firestore'; 
 import { db } from '../../firebase';
 
 // Types
@@ -18,6 +18,7 @@ import {
 import { cn } from '../../utils/firestore-helpers';
 import { parseSearchTerms, matchesAllTerms } from '../../utils/search';
 import { calculateOrderStatus } from '../../utils/orderStatus';
+import { generateTransactionNumber, buildTransactionData, getSequenceCounter } from '../../utils/wmsTransactionService';
 
 // Components
 import { ActiveTimer } from '../production/ActiveTimer';
@@ -31,6 +32,8 @@ import { ManualEntryForm } from '../management/ManualEntryForm';
 import { BulkManualEntryForm } from '../management/BulkManualEntryForm';
 import { EmployeeTimelineView } from '../management/EmployeeTimelineView';
 import { ImportResolutionModal } from '../wms/ImportResolutionModal';
+import { AttendanceImportView } from '../administracja/AttendanceImportView';
+import { AttendanceOEEView } from '../management/AttendanceOEEView';
 import { OrderElementEditor } from '../production/OrderElementEditor';
 import { ElementSelectionModal } from './ElementSelectionModal';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -54,12 +57,16 @@ import { DraftMigration } from '../wms/DraftMigration';
 import { InventoryZeroingView } from '../wms/InventoryZeroingView';
 import { MaterialReservationsView } from '../wms/MaterialReservationsView';
 import { WeightCoefficientsView } from '../wms/WeightCoefficientsView';
+import { InventoryLedgerView } from '../wms/InventoryLedgerView';
+import { InventoryBOInitializationModal } from '../wms/InventoryBOInitializationModal';
 import { TechOperationsView } from '../administracja/TechOperationsView';
 import { TechProcessesView } from '../administracja/TechProcessesView';
 import { MissingWeightsView } from '../production/MissingWeightsView';
 import { BoardDrawingsManager } from '../administracja/BoardDrawingsManager';
+import { TonnageStatsView } from '../management/TonnageStatsView';
 
 interface MainDashboardProps {
+  systemMetadata?: any;
   user: any;
   profile: UserProfile | null;
   isAdmin: boolean;
@@ -104,7 +111,7 @@ interface MainDashboardProps {
 }
 
 export function MainDashboard(props: MainDashboardProps) {
-  const [view, setView] = useState<'orders' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'timeline' | 'stations' | 'docs' | 'live' | 'element-stats' | 'wms-inventory' | 'wms-deliveries' | 'wms-registry' | 'wms-coeffs' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations' | 'tech-operations' | 'tech-processes' | 'missing-weights' | 'tech-board-drawings'>('live');
+  const [view, setView] = useState<'orders' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'attendance-import' | 'attendance-oee' | 'timeline' | 'stations' | 'docs' | 'live' | 'element-stats' | 'tonnage-stats' | 'wms-inventory' | 'wms-deliveries' | 'wms-registry' | 'wms-coeffs' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations' | 'wms-ledger' | 'tech-operations' | 'tech-processes' | 'missing-weights' | 'tech-board-drawings'>('live');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeStatuses, setActiveStatuses] = useState<ProductionOrder['status'][]>(['pending', 'in-progress', 'reported', 'completed']);
   const [manualEntryVersion, setManualEntryVersion] = useState<1 | 2>(1);
@@ -119,6 +126,11 @@ export function MainDashboard(props: MainDashboardProps) {
 
   const [archivedOrders, setArchivedOrders] = useState<ProductionOrder[]>([]);
   const [isSearchingArchive, setIsSearchingArchive] = useState(false);
+  const [showBOModal, setShowBOModal] = useState(false);
+  
+  // Stan dla widoków analitycznych (pełna lista zleceń)
+  const [analyticalOrders, setAnalyticalOrders] = useState<ProductionOrder[] | null>(null);
+  const [isFetchingAnalytical, setIsFetchingAnalytical] = useState(false);
 
   useEffect(() => {
     const role = (props.overrideRole || props.profile?.role)?.toUpperCase();
@@ -135,6 +147,30 @@ export function MainDashboard(props: MainDashboardProps) {
       setView('orders');
     }
   }, [props.overrideRole, props.profile?.role]);
+
+  // Pobieranie wszystkich zleceń z bazy, gdy wejdziemy w widok analityczny
+  useEffect(() => {
+    const isAnalyticalView = ['tonnage-stats', 'element-stats', 'reports', 'timeline'].includes(view);
+    
+    if (isAnalyticalView && !analyticalOrders && !isFetchingAnalytical) {
+      setIsFetchingAnalytical(true);
+      const fetchAllOrders = async () => {
+        try {
+          const q = query(collection(db, 'orders'));
+          const snap = await getDocs(q);
+          const all = snap.docs.map(doc => ({ ...doc.data(), id: doc.id })) as ProductionOrder[];
+          setAnalyticalOrders(all);
+        } catch (error) {
+          console.error("Błąd pobierania wszystkich zleceń dla analityki:", error);
+        } finally {
+          setIsFetchingAnalytical(false);
+        }
+      };
+      fetchAllOrders();
+    }
+  }, [view, analyticalOrders, isFetchingAnalytical]);
+
+  const ordersForAnalyticalViews = analyticalOrders || props.orders;
 
   // 1. Wyszukiwanie LOKALNE
   const filteredOrders = props.orders.filter(order => {
@@ -259,33 +295,62 @@ export function MainDashboard(props: MainDashboardProps) {
         ...batchData,
         sourcePurchaseOrderId: itemToReceive.id,
         unitPrice: itemToReceive.unitPrice || 0,
+        priceUnit: itemToReceive.priceUnit || '1',
+        priceUnitMultiplier: itemToReceive.priceUnitMultiplier || 1,
         totalValue: batchData.numericQuantity * (itemToReceive.unitPrice || 0),
-        createdAt: serverTimestamp(), // Z Firebase
+        createdAt: serverTimestamp(),
         createdBy: 'Magazynier (Ręcznie)'
       };
 
-      const batch = writeBatch(db);
-      batch.set(batchRef, finalBatchData);
+      await runTransaction(db, async (transaction) => {
+        // Pobranie licznika sekwencji dla kwitów WMS ERP
+        const seqCounter = await getSequenceCounter(db, transaction);
+        const txNumber = seqCounter.getNextNumber('PZ');
+        seqCounter.commit(transaction);
 
-      const backupRef = doc(collection(db, 'wmsReceiptsBackup'));
-      batch.set(backupRef, {
-        batchId: batchRef.id,
-        importType: 'MANUAL_APP_RECEIPT',
-        data: finalBatchData,
-        recordedAt: serverTimestamp() // Z Firebase
+        // Tworzenie nowej partii w inventoryBatches
+        transaction.set(batchRef, finalBatchData);
+
+        // Utworzenie oficjalnego kwitu ERP PZ (Przychód Zewnętrzny)
+        const txRef = doc(collection(db, 'inventoryTransactions'));
+        const unitLabel = batchData.quantityString?.split(' ')[1] || batchData.unit || 'szt';
+        const txData = buildTransactionData({
+          type: 'PZ',
+          batchId: batchRef.id,
+          batchNumber: batchData.batchNumber,
+          articleNumber: batchData.articleNumber || itemToReceive.articleNumber || '',
+          articleName: batchData.articleName || itemToReceive.articleName || '',
+          quantity: batchData.numericQuantity,
+          unit: unitLabel,
+          unitPrice: finalBatchData.unitPrice,
+          totalValue: finalBatchData.totalValue,
+          previousBatchQuantity: 0,
+          workerName: currentUser,
+          createdBy: currentUser,
+          sourcePurchaseOrderId: itemToReceive.id,
+          notes: batchData.notes || 'Przyjęcie dostawy (PZ)'
+        }, txNumber);
+
+        transaction.set(txRef, txData);
+
+        const backupRef = doc(collection(db, 'wmsReceiptsBackup'));
+        transaction.set(backupRef, {
+          batchId: batchRef.id,
+          importType: 'MANUAL_APP_RECEIPT',
+          data: finalBatchData,
+          recordedAt: serverTimestamp()
+        });
+
+        const poRef = doc(db, 'expectedDeliveries', itemToReceive.id);
+        transaction.update(poRef, {
+          wmsDeliveredQuantity: increment(finalBatchData.numericQuantity),
+          wmsTotalValue: increment(finalBatchData.numericQuantity * (itemToReceive.unitPrice || 0)),
+          lastModifiedAt: serverTimestamp()
+        });
       });
 
-      const poRef = doc(db, 'expectedDeliveries', itemToReceive.id);
-      
-      batch.update(poRef, {
-        wmsDeliveredQuantity: increment(finalBatchData.numericQuantity),
-        wmsTotalValue: increment(finalBatchData.numericQuantity * (itemToReceive.unitPrice || 0)),
-        lastModifiedAt: serverTimestamp() // Z Firebase
-      });
-
-      await batch.commit();
       setItemToReceive(null);
-      alert('Pomyślnie dodano wsad na plac i przeliczono wartość!');
+      alert('Pomyślnie dodano wsad na plac, wygenerowano kwit PZ i przeliczono wartość!');
       
     } catch (err) {
       console.error(err);
@@ -410,6 +475,7 @@ export function MainDashboard(props: MainDashboardProps) {
                   <SidebarItem active={view === 'wms-taking'} onClick={() => { setView('wms-taking'); setIsSidebarOpen(false); }} icon={<ClipboardCheck size={18} />} text="Spis z Natury" />
                   <SidebarItem active={view === 'wms-zeroing'} onClick={() => { setView('wms-zeroing'); setIsSidebarOpen(false); }} icon={<Archive size={18} />} text="Zeruj Inwentaryzację" />
                   <SidebarItem active={view === 'wms-approval'} onClick={() => { setView('wms-approval'); setIsSidebarOpen(false); }} icon={<CheckCircle2 size={18} />} text="Różnice / Zatwierdź" />
+                  <SidebarItem active={view === 'wms-ledger'} onClick={() => { setView('wms-ledger'); setIsSidebarOpen(false); }} icon={<Layers size={18} />} text="Księga Transakcji (ERP)" />
                   <SidebarItem active={view === 'wms-import'} onClick={() => { setView('wms-import'); setIsSidebarOpen(false); }} icon={<Upload size={18} />} text="Wymiana Danych (ERP)" />
                   <SidebarItem active={view === 'wms-receipts'} onClick={() => { setView('wms-receipts'); setIsSidebarOpen(false); }} icon={<History size={18} />} text="Ręczne Przyjęcia" />
                 </div>
@@ -424,8 +490,11 @@ export function MainDashboard(props: MainDashboardProps) {
                     <SidebarItem active={view === 'reports'} onClick={() => { setView('reports'); setIsSidebarOpen(false); }} icon={<BarChart2 size={18} />} text="Raporty i Audyt" />
                     <SidebarItem active={view === 'timeline'} onClick={() => { setView('timeline'); setIsSidebarOpen(false); }} icon={<Clock size={18} />} text="Oś czasu pracowników" />
                     <SidebarItem active={view === 'element-stats'} onClick={() => { setView('element-stats'); setIsSidebarOpen(false); }} icon={<Package size={18} />} text="Statystyki Elementów" />
+                    <SidebarItem active={view === 'tonnage-stats'} onClick={() => { setView('tonnage-stats'); setIsSidebarOpen(false); }} icon={<BarChart2 size={18} />} text="Zestawienie Tonażu" />
                     <SidebarItem active={false} onClick={() => window.open('#tv', '_blank')} icon={<Activity size={18} />} text="Otwórz TV Monitor" />
                     <SidebarItem active={view === 'manual-entry'} onClick={() => { setView('manual-entry'); setIsSidebarOpen(false); }} icon={<PenTool size={18} />} text="Wpis ręczny" />
+                    <SidebarItem active={view === 'attendance-import'} onClick={() => { setView('attendance-import'); setIsSidebarOpen(false); }} icon={<FileSpreadsheet size={18} />} text="Import Obecności" />
+                    <SidebarItem active={view === 'attendance-oee'} onClick={() => { setView('attendance-oee'); setIsSidebarOpen(false); }} icon={<BarChart2 size={18} />} text="Bilans czasu pracy" />
                   </div>
                 </div>
                 <div>
@@ -487,11 +556,23 @@ export function MainDashboard(props: MainDashboardProps) {
               {/* DEDICATED VIEW HEADER FOR ORDERS */}
               {view === 'orders' && (
                 <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center bg-white p-4 rounded-2xl border border-stone-200 shadow-sm print:hidden">
-                  <h1 className="text-xl font-black text-stone-800 tracking-tight flex items-center gap-2">
-                    <LayoutList className="text-emerald-600" />
-                    Bieżące Zlecenia
-                    {searchTerm && <span className="text-sm font-medium text-stone-400">/ Wyniki ({combinedOrdersToDisplay.length})</span>}
-                  </h1>
+                  <div className="flex items-center gap-4">
+                    <h1 className="text-xl font-black text-stone-800 tracking-tight flex items-center gap-2">
+                      <LayoutList className="text-emerald-600" />
+                      Bieżące Zlecenia
+                      {searchTerm && <span className="text-sm font-medium text-stone-400">/ Wyniki ({combinedOrdersToDisplay.length})</span>}
+                    </h1>
+                    {props.systemMetadata?.lastOrderImportAt && (
+                      <div className="hidden md:flex flex-col text-xs text-stone-500 font-medium ml-2 border-l border-stone-200 pl-4">
+                        <span className="text-[10px] uppercase tracking-wider text-stone-400 font-bold mb-0.5">Ostatni import</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-stone-700">{new Date(props.systemMetadata.lastOrderImportAt.seconds * 1000).toLocaleString('pl-PL')}</span>
+                          <span className="text-stone-300">•</span>
+                          <span className="text-stone-600 truncate max-w-[150px]" title={props.systemMetadata.lastOrderImportBy}>{props.systemMetadata.lastOrderImportBy}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   
                   <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
                     <div className="relative flex-1 md:w-64 lg:w-72">
@@ -592,8 +673,12 @@ export function MainDashboard(props: MainDashboardProps) {
                 <EmployeeManagementView 
                   employees={props.employees} onAdd={props.onAddEmployee} onDelete={props.onDeleteEmployee} onUpdate={props.onUpdateEmployee} 
                   onClearAll={props.onClearEmployees} onImport={props.onEmployeeImport} isImporting={props.isImporting} 
-                  importSummary={props.importSummary} onClearSummary={props.onClearSummary} 
+                  importSummary={props.importSummary} onClearSummary={props.onClearSummary} workStations={props.workStations}
                 />
+              ) : view === 'attendance-oee' && props.isAdmin ? (
+                <AttendanceOEEView employees={props.employees} />
+              ) : view === 'attendance-import' && props.isAdmin ? (
+                <AttendanceImportView employees={props.employees} />
               ) : view === 'stations' && props.isAdmin ? (
                 <WorkStationManagementView stations={props.workStations} onAdd={props.onAddStation} onDelete={props.onDeleteStation} onUpdate={props.onUpdateStation} />
               ) : view === 'tech-operations' && props.isAdmin ? (
@@ -613,11 +698,11 @@ export function MainDashboard(props: MainDashboardProps) {
                     </div>
                   </div>
                   {manualEntryVersion === 1 ? (
-                    <ManualEntryForm orders={props.orders} employees={props.employees} onSubmit={async (data) => { 
+                    <ManualEntryForm orders={props.orders} employees={props.employees.filter(e => !e.isArchived)} onSubmit={async (data) => { 
                       if (await props.onAddManualLogs([{ id: Math.random().toString(36).substr(2, 9), ...data }])) setView('orders'); 
                     }} />
                   ) : (
-                    <BulkManualEntryForm orders={props.orders} employees={props.employees} onSubmit={async (entries) => { await props.onAddManualLogs(entries); }} />
+                    <BulkManualEntryForm orders={props.orders} employees={props.employees.filter(e => !e.isArchived)} onSubmit={async (entries) => { await props.onAddManualLogs(entries); }} />
                   )}
                 </div>
               ) : view === 'orders' ? (
@@ -654,17 +739,19 @@ export function MainDashboard(props: MainDashboardProps) {
                   )}
                 </div>
               ) : view === 'element-stats' && props.isAdmin ? (
-                <ElementStatsView orders={props.orders} employees={props.employees} />
+                <ElementStatsView orders={ordersForAnalyticalViews} employees={props.employees} />
+              ) : view === 'tonnage-stats' && props.isAdmin ? (
+                <TonnageStatsView orders={ordersForAnalyticalViews} />
               ) : view === 'reports' && props.isAdmin ? (
-                <ReportsView employees={props.employees} orders={props.orders} />
+                <ReportsView employees={props.employees} orders={ordersForAnalyticalViews} />
               ) : view === 'timeline' && (props.isAdmin || isPodglad) ? (
-                <EmployeeTimelineView orders={props.orders} onViewOrderLogs={setViewingOrderLogs} />
+                <EmployeeTimelineView orders={ordersForAnalyticalViews} onViewOrderLogs={setViewingOrderLogs} />
               ) : view === 'wms-inventory' && (isWMSUser || isPodglad) ? (
                 <InventoryYardView readOnly={isPodglad} />
               ) : view === 'wms-reservations' && (isWMSUser || isPodglad) ? (
                 <MaterialReservationsView readOnly={isPodglad} />
               ) : view === 'wms-deliveries' && isWMSUser ? (
-                <ExpectedDeliveriesView onReceiveClick={setItemToReceive} />
+                <ExpectedDeliveriesView onReceiveClick={setItemToReceive} currentUser={currentUser} />
               ) : view === 'wms-registry' && isWMSUser ? (
                 <ArticleRegistryView />
               ) : view === 'wms-coeffs' && isWMSUser ? (
@@ -679,6 +766,8 @@ export function MainDashboard(props: MainDashboardProps) {
                 <InventoryZeroingView currentUser={currentUser} />
               ) : view === 'wms-approval' && isWMSUser ? (
                 <InventoryApprovalView currentUser={currentUser} />
+              ) : view === 'wms-ledger' && isWMSUser ? (
+                <InventoryLedgerView currentUser={currentUser} onOpenBOModal={() => setShowBOModal(true)} />
               ) : view === 'wms-receipts' && isWMSUser ? (
                 <ManualReceiptsView />
               ) : view === 'wms-import' && isWMSUser ? (
@@ -698,6 +787,13 @@ export function MainDashboard(props: MainDashboardProps) {
           </main>
         </div>
       </div>
+      {showBOModal && (
+        <InventoryBOInitializationModal
+          onClose={() => setShowBOModal(false)}
+          onSuccess={() => alert('Zakończono inicjalizację Bilansem Otwarcia!')}
+          currentUser={currentUser}
+        />
+      )}
     </ErrorBoundary>
   );
 }

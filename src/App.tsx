@@ -59,7 +59,7 @@ export default function App() {
 
   // 2. Dyspozytor Danych (Nasz wydzielony Hook do odczytu)
   const { 
-    orders, employees, workStations, activeSessions, activeLog, setActiveLog, allActiveLogs 
+    orders, employees, workStations, activeSessions, activeLog, setActiveLog, allActiveLogs, systemMetadata 
   } = useProductionData(user, isAdmin, currentOperator);
 
   // 3. Kierownik Zmiany (Nasz wydzielony Hook do operacji na czasie pracy)
@@ -124,6 +124,7 @@ export default function App() {
       const now = serverTimestamp();
       const userIdentifier = user?.displayName || user?.email || 'System';
       const batch = writeBatch(db);
+      batch.set(doc(db, 'system', 'metadata'), { lastOrderImportAt: now, lastOrderImportBy: userIdentifier }, { merge: true });
 
       pendingNewOrders.forEach(orderData => {
         const newDocRef = doc(collection(db, 'orders'));
@@ -218,7 +219,7 @@ export default function App() {
   if ((currentRole === 'operator' || currentRole === 'operator-wms' || currentRole === 'operator-tablice') && !currentOperator) {
     return (
       <>
-        <RFIDLogin employees={employees} onLogin={(emp) => setCurrentOperator(emp)} onLogoutDevice={handleLogout} />
+        <RFIDLogin employees={employees.filter(e => !e.isArchived)} onLogin={(emp) => setCurrentOperator(emp)} onLogoutDevice={handleLogout} />
         <KeyboardToggle />
         {showKeyboard && <VirtualKeyboard />}
       </>
@@ -279,7 +280,7 @@ export default function App() {
   return (
     <>
       <MainDashboard 
-        user={user} profile={profile} isAdmin={isAdmin} orders={orders} employees={employees} 
+        user={user} profile={profile} isAdmin={isAdmin} orders={orders} employees={employees} systemMetadata={systemMetadata} 
         workStations={workStations} activeSessions={activeSessions} activeLog={activeLog} allActiveLogs={allActiveLogs}
         currentOperator={currentOperator || employees.find(e => e.id === user?.uid) || null}
         onLogout={handleLogout} onStartWork={startWork} onStopWork={stopWork} onDeleteOrder={deleteOrder} 

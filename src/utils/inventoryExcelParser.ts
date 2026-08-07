@@ -54,6 +54,16 @@ const parseExcelDate = (val: any): string => {
   return String(val).trim();
 };
 
+export const parsePriceUnitMultiplier = (priceUnitCode: string): number => {
+  const code = String(priceUnitCode || '1').trim();
+  if (code === '2') return 10;
+  if (code === '3') return 100;
+  if (code === '4') return 1000;
+  if (code === '10' || code === '100' || code === '1000') return Number(code);
+  const parsed = safeParseNumber(code);
+  return parsed > 0 ? parsed : 1;
+};
+
 // --- MASZYNA 1: Parsowanie Pliku "Zakupy-info" (Oczekiwane Dostawy) ---
 export const parseZakupyInfo = async (file: File): Promise<PurchaseOrderItem[]> => {
   return new Promise((resolve, reject) => {
@@ -98,13 +108,7 @@ export const parseZakupyInfo = async (file: File): Promise<PurchaseOrderItem[]> 
           // ROZSZERZONE ŁAPANIE CENY (Złapie "Cena (wal.podst.)", "Cena jedn.", itp.)
           const rawUnitPrice = safeParseNumber(getVal(row, ['Cena (wal.podst.)', 'Cena', 'Cena jedn.', 'Cena netto', 'Wartość']));
           const priceUnitCode = String(getVal(row, ['jc', 'pe', 'jednostka cenowa', 'jc.']) || '1').trim();
-          let priceUnitMultiplier = 1;
-          if (priceUnitCode === '2') priceUnitMultiplier = 10;
-          else if (priceUnitCode === '3') priceUnitMultiplier = 100;
-          else if (priceUnitCode === '4') priceUnitMultiplier = 1000;
-          else if (priceUnitCode === '10' || priceUnitCode === '100' || priceUnitCode === '1000') priceUnitMultiplier = Number(priceUnitCode);
-          else priceUnitMultiplier = safeParseNumber(priceUnitCode) > 0 ? safeParseNumber(priceUnitCode) : 1;
-          
+          const priceUnitMultiplier = parsePriceUnitMultiplier(priceUnitCode);
           const unitPrice = priceUnitMultiplier > 0 ? Number((rawUnitPrice / priceUnitMultiplier).toFixed(6)) : rawUnitPrice;
           
           const procesNr = String(getVal(row, ['Proces-nr']) || '').trim();
@@ -131,7 +135,9 @@ export const parseZakupyInfo = async (file: File): Promise<PurchaseOrderItem[]> 
             quantityRemaining: remainingQty,
             unit: String(getVal(row, ['JM']) || '').trim(),
             
-            unitPrice: unitPrice, // ZAPIS CENY
+            unitPrice: unitPrice, // ZAPIS CENY ZA JEDNOSTKĘ (SZTUKE/MB/KG)
+            priceUnit: priceUnitCode,
+            priceUnitMultiplier: priceUnitMultiplier,
             currency: String(getVal(row, ['Waluta']) || '').trim() || 'PLN',
             
             orderDate: parseExcelDate(getVal(row, ['Założono', 'Data założenia'])),
@@ -240,7 +246,9 @@ export const parseInventoryBalances = async (file: File): Promise<any[]> => {
             initialQuantity: rawQty,
             unit: finalUnit, // Przypisujemy inteligentnie wybraną jednostkę
             quantityString: `${rawQty} ${finalUnit}`.trim(),
-            unitPrice: safeParseNumber(getVal(row, ['jc', 'pe', 'jednostka cenowa', 'jc.'])) > 0 ? Number((safeParseNumber(getVal(row, ['preis', 'cena'])) / safeParseNumber(getVal(row, ['jc', 'pe', 'jednostka cenowa', 'jc.']))).toFixed(6)) : safeParseNumber(getVal(row, ['preis', 'cena'])),
+            unitPrice: safeParseNumber(getVal(row, ['jc', 'pe', 'jednostka cenowa', 'jc.'])) > 0 ? Number((safeParseNumber(getVal(row, ['preis', 'cena', 'cena (wal.podst.)', 'cena netto'])) / parsePriceUnitMultiplier(String(getVal(row, ['jc', 'pe', 'jednostka cenowa', 'jc.'])))).toFixed(6)) : safeParseNumber(getVal(row, ['preis', 'cena', 'cena (wal.podst.)', 'cena netto'])),
+            priceUnit: String(getVal(row, ['jc', 'pe', 'jednostka cenowa', 'jc.']) || '1').trim(),
+            priceUnitMultiplier: parsePriceUnitMultiplier(String(getVal(row, ['jc', 'pe', 'jednostka cenowa', 'jc.']))),
             batchNumber: `${pfx}INW2026-${String(rowIdx++).padStart(4, '0')}`, 
             deliveryDate: '2026-01-01',
             supplier: 'INWENTARYZACJA BO'

@@ -3,6 +3,7 @@ import { collection, query, onSnapshot, orderBy, writeBatch, doc, serverTimestam
 import { db } from '../../firebase';
 import { Search, PackageMinus, FileSpreadsheet, User, ClipboardList, ChevronRight, ChevronLeft, X, Box, CheckCircle, Calendar as CalendarIcon } from 'lucide-react';
 import { InventoryBatch, MaterialWithdrawal } from '../../types';
+import { generateTransactionNumber, buildTransactionData, getSequenceCounter } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
 import { compareMaterialNames } from "../../utils/materialUtils";
 import { cn } from '../../utils/firestore-helpers';
@@ -302,6 +303,9 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
         
         const snaps = await Promise.all(reads);
         
+        // ODCZYT LICZNIKA SEKWENCJI PRZED JAKIMIKOLWIEK ZAPISAMI
+        const seqCounter = await getSequenceCounter(db, transaction);
+
         for (const { snap, qtyToTake, batchId } of snaps) {
           if (!snap.exists()) {
              throw new Error(`Wsad nie istnieje.`);
@@ -320,14 +324,8 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
           const currentWithdrawn = batchData.withdrawnQuantity || 0;
           const newWithdrawnQty = Number((currentWithdrawn + qtyToTake).toFixed(3));
           
-          const unitLabel = batchData.quantityString?.split(' ')[1] || '';
-          
-          transaction.update(batchRef, {
-            numericQuantity: newBatchQty,
-            withdrawnQuantity: newWithdrawnQty,
-            quantityString: `${newBatchQty} ${unitLabel}`
-          });
-          
+          const unitLabel = batchData.quantityString?.split(' ')[1] || batchData.unit || 'szt';
+
           const cv = calcValues[batchId];
           let calcDetails = '';
           if (cv) {
@@ -356,7 +354,38 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
             createdBy: currentUser
           };
           transaction.set(withdrawalRef, withdrawalData);
+
+          // Utworzenie oficjalnego kwitu ERP RW z numerera sekwencji pobranego w fazie READ
+          const txNumber = seqCounter.getNextNumber('RW');
+          const txRef = doc(collection(db, 'inventoryTransactions'));
+          const txData = buildTransactionData({
+            type: 'RW',
+            batchId,
+            batchNumber: batchData.batchNumber,
+            articleNumber: batchData.articleNumber || '',
+            articleName: batchData.articleName || '',
+            quantity: qtyToTake,
+            unit: unitLabel,
+            previousBatchQuantity: currentAvailable,
+            workerName: currentUser,
+            createdBy: currentUser,
+            date: todayStr,
+            calculatorDetails: calcDetails,
+            sourcePurchaseOrderId: batchData.sourcePurchaseOrderId || '',
+            relatedDocumentId: withdrawalRef.id
+          }, txNumber);
+          transaction.set(txRef, txData);
+
+          transaction.update(batchRef, {
+            numericQuantity: newBatchQty,
+            withdrawnQuantity: newWithdrawnQty,
+            quantityString: `${newBatchQty} ${unitLabel}`,
+            lastTransactionId: txRef.id,
+            lastTransactionAt: serverTimestamp()
+          });
         }
+
+        seqCounter.commit(transaction);
       });
 
       setSuccessMessage(`Pomyślnie wydano ${totalEnteredQty} jednostek do produkcji!`);

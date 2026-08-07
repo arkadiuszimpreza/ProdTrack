@@ -364,7 +364,14 @@ export function InventoryYardView({ readOnly = false }: InventoryYardViewProps) 
                       <input type="checkbox" className="w-4 h-4 rounded border-stone-300 text-indigo-600 cursor-pointer" checked={selectedIds.includes(b.id as string)} onChange={() => toggleSelection(b.id as string)} />
                     </td>
                     <td className="p-2 font-black text-indigo-700 cursor-pointer">{b.batchNumber}</td>
-                    <td className="p-2 font-bold text-stone-900 cursor-pointer">{b.orderNumber || '-'}</td>
+                    <td className="p-2 font-bold text-stone-900 cursor-pointer">
+                      <div className="leading-tight">{b.orderNumber || '-'}</div>
+                      {b.articleNumber && (
+                        <div className="text-[10px] text-stone-500 font-mono font-medium leading-tight truncate" title={`Indeks artykułu: ${b.articleNumber}`}>
+                          {b.articleNumber}
+                        </div>
+                      )}
+                    </td>
                     <td className="p-2 font-normal text-stone-900 cursor-pointer max-w-[280px]" title={b.articleName}>
                       <div className="line-clamp-2 text-xs leading-tight whitespace-normal break-words font-medium">
                         {b.articleName}

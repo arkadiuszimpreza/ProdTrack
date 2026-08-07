@@ -21,6 +21,10 @@ export function HistoryView({ isAdmin, orders, employees }: { isAdmin: boolean, 
   const [logs, setLogs] = useState<WorkLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingLog, setEditingLog] = useState<WorkLog | null>(null);
+  const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
+  const [isDeletingMultiple, setIsDeletingMultiple] = useState(false);
+  const [confirmMultiDeleteDialog, setConfirmMultiDeleteDialog] = useState(false);
+  const [confirmAllEmployeesDialog, setConfirmAllEmployeesDialog] = useState(false);
   
   const [sortField, setSortField] = useState<keyof WorkLog>('endTime');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -111,6 +115,70 @@ export function HistoryView({ isAdmin, orders, employees }: { isAdmin: boolean, 
     } else {
       setSortField(field);
       setSortDirection('asc');
+    }
+  };
+
+  const toggleLogSelection = (logId: string) => {
+    if (!logId) return;
+    setSelectedLogIds(prev => {
+      const next = new Set(prev);
+      if (next.has(logId)) next.delete(logId);
+      else next.add(logId);
+      return next;
+    });
+  };
+
+  const toggleAllSelection = () => {
+    if (selectedLogIds.size > 0 && selectedLogIds.size === sortedLogs.length) {
+      setSelectedLogIds(new Set());
+    } else {
+      setSelectedLogIds(new Set(sortedLogs.map(l => l.id!).filter(Boolean)));
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedLogIds.size === 0) return;
+    setConfirmMultiDeleteDialog(true);
+  };
+
+  const executeDeleteSelected = async () => {
+    setConfirmMultiDeleteDialog(false);
+    setIsDeletingMultiple(true);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const orderQtyMap = {};
+        
+        for (const logId of Array.from(selectedLogIds)) {
+          const log = logs.find(l => l.id === logId);
+          if (log && log.quantityReported && log.orderId) {
+             orderQtyMap[log.orderId] = (orderQtyMap[log.orderId] || 0) + log.quantityReported;
+          }
+        }
+        
+        for (const orderId of Object.keys(orderQtyMap)) {
+          const orderRef = doc(db, 'orders', orderId);
+          const orderSnap = await transaction.get(orderRef);
+          if (orderSnap.exists()) {
+            const currentQty = orderSnap.data().appReportedQuantity || 0;
+            const newAppQty = Math.max(0, currentQty - orderQtyMap[orderId]);
+            const newStatus = calculateOrderStatus(orderSnap.data().erpReportedQuantity || 0, newAppQty, orderSnap.data().targetQuantity);
+            transaction.update(orderRef, { appReportedQuantity: newAppQty, status: newStatus });
+          }
+        }
+
+        for (const logId of Array.from(selectedLogIds)) {
+          const logRef = doc(db, 'workLogs', logId);
+          transaction.delete(logRef);
+        }
+      });
+      
+      setLogs(prev => prev.filter(l => !l.id || !selectedLogIds.has(l.id)));
+      setSelectedLogIds(new Set());
+    } catch (err) {
+      console.error(err);
+      alert('Wystąpił błąd podczas usuwania meldunków.');
+    } finally {
+      setIsDeletingMultiple(false);
     }
   };
 
@@ -338,6 +406,62 @@ export function HistoryView({ isAdmin, orders, employees }: { isAdmin: boolean, 
       <AnimatePresence>
         {editingLog && <EditLogModal log={editingLog} orders={orders} onClose={() => setEditingLog(null)} />}
       </AnimatePresence>
+
+      {confirmAllEmployeesDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-stone-900 mb-2">Pobieranie wszystkich danych</h3>
+              <p className="text-stone-600">
+                Nie wybrałeś żadnego pracownika. Czy chcesz pobrać historię dla WSZYSTKICH pracowników? Może to zużyć więcej odczytów i trwać dłużej.
+              </p>
+            </div>
+            <div className="bg-stone-50 p-4 border-t border-stone-100 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmAllEmployeesDialog(false)}
+                className="px-4 py-2 font-bold text-stone-600 bg-white border border-stone-200 hover:bg-stone-50 rounded-xl transition-colors"
+              >
+                Anuluj
+              </button>
+              <button
+                onClick={() => { setConfirmAllEmployeesDialog(false); handleApplyFilters(); }}
+                className="px-4 py-2 font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-colors shadow-sm"
+              >
+                Pobierz
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmMultiDeleteDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-stone-900 mb-2">Potwierdzenie usunięcia</h3>
+              <p className="text-stone-600">
+                Czy na pewno chcesz usunąć {selectedLogIds.size} zaznaczonych meldunków? Ta operacja jest nieodwracalna.
+              </p>
+            </div>
+            <div className="bg-stone-50 p-4 border-t border-stone-100 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmMultiDeleteDialog(false)}
+                className="px-4 py-2 font-bold text-stone-600 bg-white border border-stone-200 hover:bg-stone-50 rounded-xl transition-colors"
+                disabled={isDeletingMultiple}
+              >
+                Anuluj
+              </button>
+              <button
+                onClick={executeDeleteSelected}
+                className="px-4 py-2 font-bold text-white bg-red-600 hover:bg-red-500 rounded-xl transition-colors shadow-sm"
+                disabled={isDeletingMultiple}
+              >
+                Usuń
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { Archive, Search, AlertCircle, Save, CheckCircle } from 'lucide-react';
 import { InventoryBatch, InventoryCount } from '../../types';
 import { compareMaterialNames } from "../../utils/materialUtils";
 import { cn } from '../../utils/firestore-helpers';
+import { getSequenceCounter, buildTransactionData } from '../../utils/wmsTransactionService';
 
 type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'PL' | 'FA' | 'SR' | 'INNE';
 
@@ -109,52 +110,88 @@ export function InventoryZeroingView({ currentUser }: Props) {
 
   const handleApplyZero = async () => {
     if (selectedCandidates.length === 0) return alert("Brak wybranych wsadów do wyzerowania.");
-    if (!window.confirm(`Czy na pewno chcesz wpisać zero asortymentowi wybranych wsadów (Ilość: ${selectedCandidates.length})? \nZostaną wygenerowane wpisy inwentaryzacyjne na 0.`)) return;
+    if (!window.confirm(`Czy na pewno chcesz natychmiast wyzerować wybrane wsady (Ilość: ${selectedCandidates.length})?\nOperacja od razu ustawi stan na 0 i wygeneruje dokumenty RWI (Manko).`)) return;
 
     if (isProcessing) return;
     setIsProcessing(true);
     
     try {
-      const BATCH_SIZE = 400; // Firestore limit is 500, lets stick to safe count
-      let currentBatchOp = writeBatch(db);
-      let operationCount = 0;
+      const CHUNK_SIZE = 50; 
+      const chunks = [];
+      for (let i = 0; i < selectedCandidates.length; i += CHUNK_SIZE) {
+        chunks.push(selectedCandidates.slice(i, i + CHUNK_SIZE));
+      }
 
-      for (const batch of selectedCandidates) {
-         const batchRef = doc(db, 'inventoryBatches', batch.id as string);
-         const countRef = doc(collection(db, 'inventoryCounts'));
-         
-         // Ustawianie 0 dla inventoryBatches
-         currentBatchOp.update(batchRef, {
-            draftQuantity: 0,
-            draftUpdatedAt: serverTimestamp(),
-            draftUpdatedBy: currentUser
-         });
-         operationCount++;
+      for (const chunk of chunks) {
+        await runTransaction(db, async (transaction) => {
+          // Pobranie aktualnych danych wsadów
+          const batchSnapshots = await Promise.all(
+            chunk.map(batch => transaction.get(doc(db, 'inventoryBatches', batch.id as string)))
+          );
 
-         // Dodawanie wpisu ilościowego 0 w inventoryCounts
-         currentBatchOp.set(countRef, {
-            batchId: batch.id,
-            quantity: 0,
-            calculatorDetails: 'Zerowanie automatyczne',
-            createdBy: currentUser,
-            createdAt: serverTimestamp(),
-            archived: false
-         });
-         operationCount++;
-         
-         // Zabezpieczenie przed limitem 500 operacji w jednym writBatch
-         if (operationCount >= BATCH_SIZE) {
-            await currentBatchOp.commit();
-            currentBatchOp = writeBatch(db);
-            operationCount = 0;
-         }
+          const seqCounter = await getSequenceCounter(db, transaction);
+          const todayStr = new Date().toISOString().split('T')[0];
+
+          for (let i = 0; i < chunk.length; i++) {
+            const batch = chunk[i];
+            const snap = batchSnapshots[i];
+            if (!snap.exists()) continue;
+
+            const dbData = snap.data();
+            const currentQty = dbData.numericQuantity || 0;
+
+            if (currentQty > 0) {
+              const txNumber = seqCounter.getNextNumber('RWI');
+              const txRef = doc(collection(db, 'inventoryTransactions'));
+              const unitLabel = batch.quantityString?.split(' ')[1] || batch.unit || 'szt';
+
+              const txData = buildTransactionData({
+                type: 'RWI',
+                batchId: batch.id as string,
+                batchNumber: batch.batchNumber,
+                articleNumber: batch.articleNumber || '',
+                articleName: batch.articleName || '',
+                quantity: currentQty,
+                unit: unitLabel,
+                previousBatchQuantity: currentQty,
+                workerName: currentUser,
+                createdBy: currentUser,
+                date: todayStr,
+                notes: 'Automatyczne zerowanie (Manko RWI)'
+              }, txNumber);
+
+              transaction.set(txRef, txData);
+
+              const batchRef = doc(db, 'inventoryBatches', batch.id as string);
+              transaction.update(batchRef, {
+                numericQuantity: 0,
+                quantityString: `0 ${unitLabel}`.trim(),
+                draftQuantity: null,
+                draftUpdatedAt: null,
+                draftUpdatedBy: null,
+                lastInventoriedAt: serverTimestamp(),
+                lastInventoriedBy: currentUser,
+                lastTransactionId: txRef.id,
+                lastTransactionAt: serverTimestamp()
+              });
+            } else {
+              // Ilość już wynosi zero (zabezpieczenie)
+              const batchRef = doc(db, 'inventoryBatches', batch.id as string);
+              transaction.update(batchRef, {
+                draftQuantity: null,
+                draftUpdatedAt: null,
+                draftUpdatedBy: null,
+                lastInventoriedAt: serverTimestamp(),
+                lastInventoriedBy: currentUser
+              });
+            }
+          }
+
+          seqCounter.commit(transaction);
+        });
       }
       
-      if (operationCount > 0) {
-        await currentBatchOp.commit();
-      }
-      
-      alert("Pomyślnie wprowadzono zera dla niezliczonych wsadów!");
+      alert("Pomyślnie wyzerowano niezliczone wsady i wygenerowano dokumenty RWI!");
     } catch(err) {
       console.error(err);
       alert("Wystąpił błąd podczas zapisywania operacji.");

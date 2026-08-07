@@ -248,6 +248,8 @@ export const matchBatchesWithERP = (
       // DZIEDZICZENIE CEN I WYCENA
       if (matchedPurchaseOrder.unitPrice) {
         batch.unitPrice = matchedPurchaseOrder.unitPrice;
+        batch.priceUnit = matchedPurchaseOrder.priceUnit;
+        batch.priceUnitMultiplier = matchedPurchaseOrder.priceUnitMultiplier;
         batch.totalValue = batch.numericQuantity * matchedPurchaseOrder.unitPrice;
       }
     }
