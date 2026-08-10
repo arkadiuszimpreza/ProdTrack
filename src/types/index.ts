@@ -213,7 +213,7 @@ export interface Employee {
   createdAt?: any;
 }
 
-export type UserRole = 'admin' | 'worker' | 'operator' | 'magazynier' | 'operator-wms' | 'tv-monitor' | 'podglad' | 'operator-tablice';
+export type UserRole = 'admin' | 'worker' | 'operator' | 'magazynier' | 'operator-wms' | 'tv-monitor' | 'podglad' | 'operator-tablice' | 'pending';
 
 /**
  * Profil użytkownika systemu (osoby logującej się przez Google).

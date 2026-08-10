@@ -31,3 +31,42 @@ export function calculateOrderStatus(
   
   return 'pending';
 }
+
+/**
+ * Calculates the new appReportedQuantity, elements array, and status for an order
+ * when a log with a certain delta quantity is applied.
+ * Correctly accounts for element weight ratios if elementId is provided.
+ */
+export function applyLogImpactToOrder(
+  orderData: Partial<ProductionOrder>,
+  elementId: string | null | undefined,
+  deltaQty: number
+): { newAppQty: number; newElements: any[]; newStatus: ProductionOrder['status'] } {
+  let weightedDelta = deltaQty;
+  let updatedElements = orderData.elements ? [...orderData.elements] : [];
+  
+  if (elementId && updatedElements.length > 0) {
+    const targetElement = updatedElements.find((el: any) => el.id === elementId);
+    if (targetElement) {
+        const totalWeight = updatedElements.reduce((sum: number, el: any) => sum + (el.weight || 0), 0);
+        if (totalWeight > 0) {
+            weightedDelta = deltaQty * ((targetElement.weight || 0) / totalWeight);
+        }
+    }
+    
+    updatedElements = updatedElements.map((el: any) => {
+      if (el.id === elementId) {
+        return { ...el, reportedQuantity: Math.max(0, (el.reportedQuantity || 0) + deltaQty) };
+      }
+      return el;
+    });
+  }
+  
+  const newAppQty = Math.max(0, (orderData.appReportedQuantity || 0) + weightedDelta);
+  let newStatus = orderData.status || 'pending';
+  if (orderData.targetQuantity !== undefined) { 
+     newStatus = calculateOrderStatus(orderData.erpReportedQuantity || 0, Number(newAppQty.toFixed(3)), orderData.targetQuantity);
+  }
+
+  return { newAppQty: Number(newAppQty.toFixed(3)), newElements: updatedElements, newStatus };
+}

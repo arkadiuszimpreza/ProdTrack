@@ -11,7 +11,7 @@ import { pl } from 'date-fns/locale';
 import { db } from '../../firebase';
 import { ProductionOrder, WorkLog, ASSORTMENT_CATEGORIES, Employee } from '../../types';
 import { cn, handleFirestoreError, OperationType } from '../../utils/firestore-helpers';
-import { calculateOrderStatus } from '../../utils/orderStatus';
+import { calculateOrderStatus, applyLogImpactToOrder } from '../../utils/orderStatus';
 import { parseSearchTerms, matchesAllTerms } from '../../utils/search';
 
 const HOURLY_RATE = 65.00;
@@ -107,24 +107,25 @@ export function OrderLogsView({ order, orders, employees, onClose }: OrderLogsVi
     try {
       await runTransaction(db, async (transaction) => {
         // Obliczamy ile odjąć od quantity ordera
-        let totalQuantityToRemove = 0;
-        
-        for (const logId of Array.from(selectedLogIds)) {
-          const log = logs.find(l => l.id === logId);
-          if (log && log.quantityReported) {
-             totalQuantityToRemove += log.quantityReported;
+        let orderRef = doc(db, "orders", order.id);
+        let orderSnap = await transaction.get(orderRef);
+        let orderData = orderSnap.exists() ? orderSnap.data() : null;
+
+        if (orderData) {
+          for (const logId of Array.from(selectedLogIds)) {
+            const log = logs.find(l => l.id === logId);
+            if (log && log.quantityReported) { 
+               const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(orderData, log.elementId, -log.quantityReported);
+               orderData.appReportedQuantity = newAppQty;
+               orderData.elements = newElements;
+               orderData.status = newStatus;
+            }
           }
-        }
-        
-        if (totalQuantityToRemove > 0) {
-          const orderRef = doc(db, 'orders', order.id);
-          const orderSnap = await transaction.get(orderRef);
-          if (orderSnap.exists()) {
-            const currentQty = orderSnap.data().appReportedQuantity || 0;
-            const newAppQty = Math.max(0, currentQty - totalQuantityToRemove);
-            const newStatus = calculateOrderStatus(orderSnap.data().erpReportedQuantity || 0, newAppQty, orderSnap.data().targetQuantity);
-            transaction.update(orderRef, { appReportedQuantity: newAppQty, status: newStatus });
-          }
+          transaction.update(orderRef, { 
+             appReportedQuantity: orderData.appReportedQuantity,
+             status: orderData.status,
+             elements: orderData.elements
+          });
         }
 
         for (const logId of Array.from(selectedLogIds)) {
@@ -889,10 +890,8 @@ export function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: P
           const orderRef = doc(db, 'orders', log.orderId);
           const orderSnap = await transaction.get(orderRef);
           if (orderSnap.exists()) {
-            const currentQty = orderSnap.data().appReportedQuantity || 0;
-            const newAppQty = Math.max(0, currentQty - (log.quantityReported || 0));
-            const newStatus = calculateOrderStatus(orderSnap.data().erpReportedQuantity || 0, newAppQty, orderSnap.data().targetQuantity);
-            transaction.update(orderRef, { appReportedQuantity: newAppQty, status: newStatus });
+            const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(orderSnap.data(), log.elementId, -(log.quantityReported || 0));
+            transaction.update(orderRef, { appReportedQuantity: newAppQty, status: newStatus, elements: newElements });
           }
         }
         transaction.delete(logRef);
@@ -949,29 +948,26 @@ export function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: P
         }
 
         if (log.orderId && log.orderId !== selectedOrderId && oldOrderSnap && oldOrderSnap.exists()) {
-          const oldOrderRef = doc(db, 'orders', log.orderId);
+          const oldOrderRef = doc(db, "orders", log.orderId);
           const oldData = oldOrderSnap.data();
-          const oldAppQty = Math.max(0, (oldData.appReportedQuantity || 0) - (log.quantityReported || 0));
-          const oldStatus = calculateOrderStatus(oldData.erpReportedQuantity || 0, oldAppQty, oldData.targetQuantity);
-          transaction.update(oldOrderRef, { appReportedQuantity: oldAppQty, status: oldStatus });
+          const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(oldData, log.elementId, -(log.quantityReported || 0));
+          transaction.update(oldOrderRef, { appReportedQuantity: newAppQty, status: newStatus, elements: newElements });
         }
 
         if (selectedOrderId && newOrderSnap && newOrderSnap.exists()) {
-          const newOrderRef = doc(db, 'orders', selectedOrderId);
-          const newData = newOrderSnap.data();
+          const newOrderRef = doc(db, "orders", selectedOrderId);
+          let newData = newOrderSnap.data();
           orderNameForLog = newData.orderNumber;
           
-          let newAppQty = newData.appReportedQuantity || 0;
           if (selectedOrderId === log.orderId) {
-            newAppQty = newAppQty - (log.quantityReported || 0) + safeQuantity;
-          } else {
-            newAppQty = newAppQty + safeQuantity;
+            const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(newData, log.elementId, -(log.quantityReported || 0));
+            newData = { ...newData, appReportedQuantity: newAppQty, elements: newElements, status: newStatus };
           }
-          newAppQty = Math.max(0, newAppQty);
-          const newStatus = calculateOrderStatus(newData.erpReportedQuantity || 0, newAppQty, newData.targetQuantity);
-          transaction.update(newOrderRef, { appReportedQuantity: newAppQty, status: newStatus });
+          
+          const { newAppQty: finalAppQty, newElements: finalElements, newStatus: finalStatus } = applyLogImpactToOrder(newData, selectedElementId, safeQuantity);
+          
+          transaction.update(newOrderRef, { appReportedQuantity: finalAppQty, status: finalStatus, elements: finalElements });
         }
-
         const logRef = doc(db, 'workLogs', log.id!);
         transaction.update(logRef, {
           quantityReported: safeQuantity,
@@ -1258,10 +1254,8 @@ export function AddLogModal({ employeeId, employeeName, orders, onClose }: { emp
         if (selectedOrderId && newOrderSnap && newOrderSnap.exists()) {
           const newOrderRef = doc(db, 'orders', selectedOrderId);
           const newData = newOrderSnap.data();
-          orderNameForLog = newData.orderNumber;
-          const newAppQty = Math.max(0, (newData.appReportedQuantity || 0) + safeQuantity);
-          const newStatus = calculateOrderStatus(newData.erpReportedQuantity || 0, newAppQty, newData.targetQuantity);
-          transaction.update(newOrderRef, { appReportedQuantity: newAppQty, status: newStatus });
+          const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(newData, selectedElementId, safeQuantity);
+          transaction.update(newOrderRef, { appReportedQuantity: newAppQty, status: newStatus, elements: newElements });
         }
 
         const logRef = doc(collection(db, 'workLogs'));

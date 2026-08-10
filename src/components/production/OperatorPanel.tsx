@@ -40,7 +40,6 @@ interface OperatorPanelProps {
   onJoinTeam: (session: WorkSession) => Promise<void> | void;
   deviceRole?: UserRole;
   onWmsClick?: () => void;
-  onTabliceClick?: () => void;
 }
 
 export function OperatorPanel({
@@ -56,8 +55,7 @@ export function OperatorPanel({
   onStartTeamWork,
   onJoinTeam,
   deviceRole,
-  onWmsClick,
-  onTabliceClick
+  onWmsClick
 }: OperatorPanelProps) {
   const [timeLeft, setTimeLeft] = useState(30);
   const [timerKey, setTimerKey] = useState(0);
@@ -434,26 +432,6 @@ export function OperatorPanel({
         </motion.div>
       )}
 
-      {/* Button dla tablic warstwowych jeśli nie chcemy zmieniać default roles, albo możemy użyć nowej roli */}
-      {onTabliceClick && !mode && !activeLog && (
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="w-56 shrink-0 flex items-stretch h-full min-h-[400px]"
-        >
-          <button
-            onClick={onTabliceClick}
-            className="w-full h-full bg-emerald-600 rounded-[3rem] shadow-xl text-center border border-emerald-700 flex flex-col justify-center items-center hover:bg-emerald-700 transition-colors p-6 group"
-          >
-            <div className="text-white mb-6 group-hover:scale-110 transition-transform">
-              <Factory size={64} />
-            </div>
-            <span className="text-white font-black text-2xl leading-tight">
-              Dział Tablic
-            </span>
-          </button>
-        </motion.div>
-      )}
       </div>
     </div>
   );

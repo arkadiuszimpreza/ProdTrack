@@ -4,7 +4,7 @@ import { db } from '../../firebase';
 import * as XLSX from 'xlsx';
 import { Download, Search, AlertCircle, Calendar, Users, Percent } from 'lucide-react';
 import { motion } from 'motion/react';
-import { format, startOfMonth, endOfMonth, getISOWeeksInYear, startOfISOWeek, endOfISOWeek, getISOWeek, getDate, getMonth, getYear } from 'date-fns';
+import { format, startOfMonth, endOfMonth, getISOWeeksInYear, startOfISOWeek, endOfISOWeek, getISOWeek, getDate, getMonth, getYear, subWeeks } from 'date-fns';
 import { pl } from 'date-fns/locale';
 import { Employee, WorkLog, AttendanceRecord } from '../../types';
 import { cn } from '../../utils/firestore-helpers';
@@ -14,10 +14,11 @@ interface Props {
 }
 
 export function AttendanceOEEView({ employees }: Props) {
-  const [reportMode, setReportMode] = useState<'month' | 'week'>('month');
+  const previousWeekDate = subWeeks(new Date(), 1);
+  const [reportMode, setReportMode] = useState<'month' | 'week'>('week');
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
-  const [selectedWeek, setSelectedWeek] = useState<number>(getISOWeek(new Date()));
+  const [selectedYear, setSelectedYear] = useState<number>(previousWeekDate.getFullYear());
+  const [selectedWeek, setSelectedWeek] = useState<number>(getISOWeek(previousWeekDate));
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');

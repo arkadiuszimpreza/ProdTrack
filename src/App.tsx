@@ -55,7 +55,6 @@ export default function App() {
   const isAdmin = currentRole === 'admin';
   const { customKeyboardEnabled: showKeyboard } = useDeviceEnvironment();
   const [wmsMode, setWmsMode] = useState(false);
-  const [tabliceMode, setTabliceMode] = useState(false);
 
   // 2. Dyspozytor Danych (Nasz wydzielony Hook do odczytu)
   const { 
@@ -88,8 +87,7 @@ export default function App() {
         if (userDoc.exists()) {
           setProfile({ ...userDoc.data(), uid: u.uid } as UserProfile);
         } else {
-          const isDefaultAdmin = u.email === 'arkadiusz.biesiada@erplast.pl';
-          const newProfile = { uid: u.uid, displayName: u.displayName || 'Użytkownik', email: u.email || '', role: isDefaultAdmin ? 'admin' : 'worker' };
+          const newProfile = { uid: u.uid, displayName: u.displayName || 'Użytkownik', email: u.email || '', role: 'pending' };
           await setDoc(doc(db, 'users', u.uid), newProfile);
           setProfile(newProfile as UserProfile);
         }
@@ -101,7 +99,13 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const handleLogin = async () => { try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { console.error(e); } };
+  const handleLogin = async () => { 
+    try { 
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ hd: 'erplast.pl' });
+      await signInWithPopup(auth, provider); 
+    } catch (e) { console.error(e); } 
+  };
   const handleLogout = useCallback(() => { signOut(auth); setCurrentOperator(null); setOverrideRole(null); }, []);
 
   // --- FUNKCJE OPERACYJNE (IMPORT I ADMIN) ---
@@ -241,15 +245,14 @@ export default function App() {
        );
     }
 
-    if (tabliceMode || currentRole === 'operator-tablice') {
+    if (currentRole === 'operator-tablice') {
        return (
          <>
            <OperatorPanelTablice 
              operator={currentOperator} orders={orders} activeLog={activeLog} 
              activeSessions={activeSessions}
-             onLogout={() => { setTabliceMode(false); setCurrentOperator(null); }}
+             onLogout={() => setCurrentOperator(null)}
              onStartWork={startWork} onStopWork={stopWork}
-             onBackToOperator={currentRole !== 'operator-tablice' ? () => setTabliceMode(false) : undefined}
            />
            <KeyboardToggle />
            {showKeyboard && <VirtualKeyboard />}
@@ -269,7 +272,6 @@ export default function App() {
           onJoinTeam={joinTeam} 
           deviceRole={currentRole}
           onWmsClick={() => setWmsMode(true)}
-          onTabliceClick={() => setTabliceMode(true)}
         />
         <KeyboardToggle />
         {showKeyboard && <VirtualKeyboard />}

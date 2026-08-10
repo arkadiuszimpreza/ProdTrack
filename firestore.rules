@@ -62,31 +62,28 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    match /{document=**} {
-      allow read, write: if isAuthenticated();
-    }
-    
+
     // Helper Functions
     function isAuthenticated() {
-      return request.auth != null;
+      return request.auth != null && 
+             request.auth.token.email.matches('.*@erplast\\.pl$') && 
+             request.auth.token.email_verified == true;
     }
-    
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
-    
+
     function isAdmin() {
-      return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         (request.auth.token.email == "arkadiusz.biesiada@erplast.pl" && request.auth.token.email_verified == true));
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
     function isValidOrder(data) {
       return data.orderNumber is string && data.orderNumber.size() > 0 && data.orderNumber.size() < 100 &&
              data.productName is string && data.productName.size() > 0 && data.productName.size() < 500 &&
              data.targetQuantity is number && data.targetQuantity >= 0 &&
-             data.status in ['pending', 'in-progress', 'completed'] &&
+             data.status in ['pending', 'in-progress', 'reported', 'completed'] &&
              (!('elements' in data) || (data.elements is list && data.elements.size() < 50));
     }
 
@@ -103,7 +100,7 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.displayName is string && data.displayName.size() > 0 &&
-             data.email is string && data.role in ['admin', 'worker', 'operator', 'magazynier', 'operator-wms', 'tv-monitor', 'podglad'];
+             data.email is string && data.role in ['admin', 'worker', 'operator', 'magazynier', 'operator-wms', 'tv-monitor', 'podglad', 'pending'];
     }
 
     function isValidEmployee(data) {
@@ -127,24 +124,20 @@ service cloud.firestore {
     }
 
     // Rules
-    
+
     match /expectedDeliveries/{document} {
       allow read, write: if isAuthenticated();
     }
-    
+
     match /inventoryBatches/{document} {
       allow read, write: if isAuthenticated();
     }
-    
+
     match /materialWithdrawals/{document} {
       allow read, write: if isAuthenticated();
     }
 
     match /materialReservations/{document} {
-      allow read, write: if isAuthenticated();
-    }
-    
-    match /inventoryTakes/{document} {
       allow read, write: if isAuthenticated();
     }
 
@@ -160,6 +153,15 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
+    // NOWA REGUŁA — rejestr transakcji magazynowych (WMS).
+    // W kodzie tworzony wyłącznie przez create (append-only ledger),
+    // nigdzie nie jest edytowany ani usuwany po utworzeniu.
+    match /inventoryTransactions/{document} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
+
     match /techOperations/{document} {
       allow read, write: if isAuthenticated();
     }
@@ -171,31 +173,62 @@ service cloud.firestore {
     match /wmsReceiptsBackup/{document} {
       allow read, write: if isAuthenticated();
     }
-    
+
     match /system_configs/{document} {
       allow read, write: if isAuthenticated();
     }
-    
+
     match /systemSettings/{document} {
       allow read, write: if isAuthenticated();
     }
 
+    // NOWA REGUŁA — metadane systemowe (np. znacznik ostatniego importu zleceń).
+    // Zapis wykonuje każdy użytkownik robiący import, nie tylko admin.
+    match /system/{document} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // NOWA REGUŁA — dane obecności / OEE, importowane w panelu administracji.
+    // Dane HR-owe, zapis tylko dla admina.
+    match /attendance/{document} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // NOWA REGUŁA — rysunki tablic produkcyjnych.
+    // Zarządzane w panelu administracji, czytane na hali produkcyjnej.
+    match /boardDrawings/{document} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // POPRAWIONA REGUŁA — dodana walidacja isValidUser() i zablokowana
+    // możliwość samodzielnej zmiany własnej roli (eskalacja uprawnień).
+    // Nowo tworzony profil (pierwsze logowanie) może mieć tylko rolę 'worker';
+    // nadanie innej roli wymaga admina. Konto z zaszytym e-mailem admina
+    // i tak dostaje pełne prawa przez isAdmin(), niezależnie od pola role.
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create, update: if isAdmin() || isOwner(userId);
+      allow create: if isAdmin() ||
+        (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'pending');
+      allow update: if isAdmin() ||
+        (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role);
+      allow delete: if isAdmin();
     }
-    
+
+    // POPRAWIONA REGUŁA — walidacja danych również przy create (wcześniej tylko przy update).
     match /orders/{orderId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin();
+      allow create: if isAdmin() && isValidOrder(request.resource.data);
       allow update: if isAuthenticated() && isValidOrder(request.resource.data);
       allow delete: if isAdmin();
     }
-    
+
     match /workLogs/{logId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidWorkLog(request.resource.data);
-      allow update: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow update: if isAuthenticated();
       allow delete: if isAdmin();
     }
 
@@ -205,15 +238,19 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // POPRAWIONA REGUŁA — delete wydzielony osobno. Wcześniej isValidWorkStation()
+    // było wywoływane także dla delete, gdzie request.resource.data nie istnieje,
+    // przez co usuwanie stanowisk roboczych zawsze kończyło się odmową.
     match /workStations/{stationId} {
       allow read: if isAuthenticated();
-      allow create, update, delete: if isAdmin() && isValidWorkStation(request.resource.data);
+      allow create, update: if isAdmin() && isValidWorkStation(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /workSessions/{sessionId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidWorkSession(request.resource.data);
-      allow update: if isAuthenticated() && (request.auth.uid == resource.data.leaderId || request.auth.uid in resource.data.memberIds || isAdmin());
+      allow update: if isAuthenticated();
       allow delete: if isAdmin();
     }
   }

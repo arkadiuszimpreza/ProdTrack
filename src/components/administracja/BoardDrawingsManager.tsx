@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, serverTimestamp, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { auth, db } from '../../firebase';
+import { getIdToken } from 'firebase/auth';
+
 import { BoardDrawing, ProductionOrder, BoardDrawingElement } from '../../types';
 import { Upload, Trash2, Link as LinkIcon, FileText, Check, X } from 'lucide-react';
 
@@ -51,12 +53,21 @@ export function BoardDrawingsManager({ orders, userProfile }: Props) {
     addLog(`Wpisany numer zlecenia klienta (ZL): "${clientOrderNumber}"`);
 
     try {
+      const user = auth.currentUser;
+      if (!user) {
+        addLog("Błąd: Użytkownik niezalogowany.");
+        setLoading(false);
+        return;
+      }
+      const token = await getIdToken(user);
       const formData = new FormData();
       formData.append("pdf", selectedFile);
-
       addLog(`Wysyłam plik do serwera na analizę AI...`);
       const response = await fetch("/api/parse-pdf", {
         method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        },
         body: formData,
       });
 

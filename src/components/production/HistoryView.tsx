@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { WorkLog, ProductionOrder, ASSORTMENT_CATEGORIES, Employee } from '../../types';
 import { handleFirestoreError, OperationType } from '../../utils/firestore-helpers';
 import { parseSearchTerms, matchesAllTerms } from '../../utils/search';
-import { calculateOrderStatus } from '../../utils/orderStatus';
+import { calculateOrderStatus, applyLogImpactToOrder } from '../../utils/orderStatus';
 import { cn } from '../../utils/firestore-helpers';
 
 type FilterPeriod = 'this_week' | 'last_week' | 'two_weeks_ago' | 'three_weeks_ago';
@@ -146,24 +146,35 @@ export function HistoryView({ isAdmin, orders, employees }: { isAdmin: boolean, 
     setIsDeletingMultiple(true);
     try {
       await runTransaction(db, async (transaction) => {
-        const orderQtyMap = {};
+        const ordersToUpdate = new Map<string, any>();
         
         for (const logId of Array.from(selectedLogIds)) {
           const log = logs.find(l => l.id === logId);
-          if (log && log.quantityReported && log.orderId) {
-             orderQtyMap[log.orderId] = (orderQtyMap[log.orderId] || 0) + log.quantityReported;
+          if (!log || !log.orderId || !log.quantityReported) continue;
+          
+          let orderData = ordersToUpdate.get(log.orderId);
+          if (!orderData) {
+            const orderSnap = await transaction.get(doc(db, 'orders', log.orderId));
+            if (orderSnap.exists()) {
+              orderData = orderSnap.data();
+            }
+          }
+          
+          if (orderData) {
+            const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(orderData, log.elementId, -log.quantityReported);
+            orderData.appReportedQuantity = newAppQty;
+            orderData.elements = newElements;
+            orderData.status = newStatus;
+            ordersToUpdate.set(log.orderId, orderData);
           }
         }
         
-        for (const orderId of Object.keys(orderQtyMap)) {
-          const orderRef = doc(db, 'orders', orderId);
-          const orderSnap = await transaction.get(orderRef);
-          if (orderSnap.exists()) {
-            const currentQty = orderSnap.data().appReportedQuantity || 0;
-            const newAppQty = Math.max(0, currentQty - orderQtyMap[orderId]);
-            const newStatus = calculateOrderStatus(orderSnap.data().erpReportedQuantity || 0, newAppQty, orderSnap.data().targetQuantity);
-            transaction.update(orderRef, { appReportedQuantity: newAppQty, status: newStatus });
-          }
+        for (const [orderId, orderData] of ordersToUpdate.entries()) {
+          transaction.update(doc(db, 'orders', orderId), { 
+            appReportedQuantity: orderData.appReportedQuantity,
+            status: orderData.status,
+            elements: orderData.elements
+          });
         }
 
         for (const logId of Array.from(selectedLogIds)) {
@@ -626,32 +637,18 @@ function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: Producti
         // PHASE 2: WRITES
         const updateOrderAndElementQty = (orderId: string, elementId: string | undefined, deltaQty: number, snapToUse: any) => {
           if (!orderId || !snapToUse || !snapToUse.exists()) return null;
-          const orderRef = doc(db, 'orders', orderId);
+          const orderRef = doc(db, "orders", orderId);
           const data = snapToUse.data();
-          const newAppQty = Math.max(0, (data.appReportedQuantity || 0) + deltaQty);
-          let newStatus = data.status; // fallback
-          if (data.targetQuantity !== undefined) {
-             newStatus = calculateOrderStatus(data.erpReportedQuantity || 0, newAppQty, data.targetQuantity);
-          }
-          
-          let updatedElements = data.elements || [];
-          if (elementId && updatedElements.length > 0) {
-            updatedElements = updatedElements.map((el: any) => {
-              if (el.id === elementId) {
-                return { ...el, reportedQuantity: Math.max(0, (el.reportedQuantity || 0) + deltaQty) };
-              }
-              return el;
-            });
-          }
-          
+
+          const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(data, elementId, deltaQty);
+
           transaction.update(orderRef, { 
-            appReportedQuantity: newAppQty, 
-            status: newStatus,
-            elements: updatedElements
+             appReportedQuantity: newAppQty, 
+             status: newStatus,
+            elements: newElements
           });
           return data;
         };
-
         if (oldOrderId !== newOrderId || oldElementId !== newElementId) {
           if (oldOrderId) updateOrderAndElementQty(oldOrderId, oldElementId, -oldQty, oldOrderSnap);
           if (newOrderId) {
@@ -706,24 +703,11 @@ function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: Producti
         if (logData.orderId && orderSnap && orderSnap.exists()) {
           const orderRef = doc(db, 'orders', logData.orderId);
           const orderData = orderSnap.data();
-          const qtyToSubtract = logData.quantityReported || 0;
-          const newAppQty = Math.max(0, (orderData.appReportedQuantity || 0) - qtyToSubtract);
-          const newStatus = calculateOrderStatus(orderData.erpReportedQuantity || 0, newAppQty, orderData.targetQuantity);
-          
-          let updatedElements = orderData.elements || [];
-          if (logData.elementId && updatedElements.length > 0) {
-            updatedElements = updatedElements.map((el: any) => {
-              if (el.id === logData.elementId) {
-                return { ...el, reportedQuantity: Math.max(0, (el.reportedQuantity || 0) - qtyToSubtract) };
-              }
-              return el;
-            });
-          }
-
+          const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(orderData, logData.elementId, -(logData.quantityReported || 0));
           transaction.update(orderRef, { 
-            appReportedQuantity: newAppQty, 
-            status: newStatus,
-            elements: updatedElements
+             appReportedQuantity: newAppQty, 
+             status: newStatus,
+            elements: newElements
           });
         }
         transaction.delete(logRef);

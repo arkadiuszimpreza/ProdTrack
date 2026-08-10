@@ -7,8 +7,45 @@ import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import fs from "fs";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import { initializeApp, getApps } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 
-const upload = multer({ dest: "uploads/" });
+if (!getApps().length) {
+  try {
+    initializeApp();
+  } catch (error) {
+    console.error("Firebase admin initialization error", error);
+  }
+}
+
+const upload = multer({ 
+  dest: "uploads/",
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only .pdf files are allowed!'));
+    }
+  }
+});
+
+const requireAuth = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Brak tokenu autoryzacji" });
+  }
+
+  const idToken = authHeader.split("Bearer ")[1];
+  try {
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+    req.user = decodedToken;
+    next();
+  } catch (error) {
+    console.error("Błąd weryfikacji tokenu:", error);
+    return res.status(401).json({ error: "Nieprawidłowy token autoryzacji" });
+  }
+};
 
 interface PDFElementCoords {
   x: number;
@@ -209,7 +246,7 @@ async function startServer() {
   app.use(express.json());
 
   // API Route for PDF processing
-  app.post("/api/parse-pdf", upload.single("pdf"), async (req, res) => {
+  app.post("/api/parse-pdf", requireAuth, upload.single("pdf"), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "No file uploaded" });
