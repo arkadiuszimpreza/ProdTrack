@@ -69,7 +69,7 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
   const [materialFilter, setMaterialFilter] = useState<MaterialFilter>('ALL');
   const [selectedArticle, setSelectedArticle] = useState<string | null>(null);
   const [withdrawalQuantities, setWithdrawalQuantities] = useState<Record<string, any>>({});
-  const [calcValues, setCalcValues] = useState<Record<string, { pieces: string; length: string; width?: string; height?: string }>>({});
+  const [calcValues, setCalcValues] = useState<Record<string, { pieces: string; length: string; width?: string; height?: string; area?: string }>>({});
 
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -122,7 +122,7 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
     return '';
   };
 
-  const handleCalcChange = (batchId: string, field: 'pieces' | 'length' | 'width' | 'height', val: string, batch: InventoryBatch) => {
+  const handleCalcChange = (batchId: string, field: 'pieces' | 'length' | 'width' | 'height' | 'area', val: string, batch: InventoryBatch) => {
     setCalcValues(prev => {
       let dims = { width: '', height: '' };
       if (batch.dimensions) {
@@ -132,7 +132,7 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
           dims.height = dimMatch[2].replace(',', '.');
         }
       }
-      const cur = prev[batchId] || { pieces: '', length: extractLengthFromDimensions(batch.dimensions), width: dims.width, height: dims.height };
+      const cur = prev[batchId] || { pieces: '', length: extractLengthFromDimensions(batch.dimensions), width: dims.width, height: dims.height, area: '' };
       const next = { ...cur, [field]: val };
       const p = parseFloat(next.pieces.replace(/,/g, '.'));
       const type = guessPrefix(batch.articleName || '');
@@ -144,8 +144,17 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
         const coeffNum = parseFloat(coeffStr);
         const w = parseFloat((next.width || '').replace(',', '.'));
         const h = parseFloat((next.height || '').replace(',', '.'));
+        const a = parseFloat((next.area || '').replace(',', '.'));
 
-        if (!isNaN(p) && p >= 0 && !isNaN(coeffNum) && coeffNum > 0 && !isNaN(w) && w > 0 && !isNaN(h) && h > 0) {
+        if (!isNaN(a) && a > 0 && !isNaN(coeffNum) && coeffNum > 0) {
+          const totalAreaM2 = a;
+          const isM2 = (batch.unit || '').toLowerCase() === 'm2' || (batch.unit || '').toLowerCase() === 'm²';
+          if (isM2) {
+            newWithdrawalQtyStr = Number((totalAreaM2).toFixed(3)).toString();
+          } else {
+            newWithdrawalQtyStr = Number((totalAreaM2 * coeffNum).toFixed(3)).toString();
+          }
+        } else if (!isNaN(p) && p >= 0 && !isNaN(coeffNum) && coeffNum > 0 && !isNaN(w) && w > 0 && !isNaN(h) && h > 0) {
           const totalAreaM2 = p * (w / 1000) * (h / 1000);
           const isM2 = (batch.unit || '').toLowerCase() === 'm2' || (batch.unit || '').toLowerCase() === 'm²';
           if (isM2) {
@@ -659,6 +668,22 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                 </div>
               </div>
 
+              <div className="p-6 bg-white border-b border-stone-200 shadow-sm z-10 relative flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-black uppercase text-stone-400">Łącznie do pobrania</p>
+                  <p className="text-2xl font-black text-indigo-700 leading-none mt-1">
+                    {totalEnteredQty.toFixed(3)}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsConfirming(true)}
+                  disabled={totalEnteredQty <= 0 || isSubmitting}
+                  className="px-8 py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-wider hover:bg-indigo-700 disabled:opacity-40 transition-all shadow-lg shadow-indigo-600/20 active:scale-95"
+                >
+                  {isSubmitting ? 'Zatwierdzanie...' : 'Zatwierdź Przesunięcie'}
+                </button>
+              </div>
+
               <div className="flex-1 overflow-y-auto p-6 bg-stone-50/50 custom-scrollbar">
                 <div className="grid sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-4">
                   {activeBatches.map(b => {
@@ -733,8 +758,9 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                                     <span className="text-[9px] uppercase font-bold text-stone-400 shrink-0">Kalk:</span>
                                     <div className="text-[10px] font-bold text-stone-500 text-right truncate">
                                       {(() => {
-                                        const cv = calcValues[b.id as string] || { pieces: '', length: '', width: '', height: '' };
+                                        const cv = calcValues[b.id as string] || { pieces: '', length: '', width: '', height: '', area: '' };
                                         const p = parseFloat((cv.pieces || '').replace(',', '.'));
+                                        const a = parseFloat((cv.area || '').replace(',', '.'));
                                         const wStr = cv.width !== undefined ? cv.width : (() => {
                                           if (b.dimensions) {
                                             const dimMatch = b.dimensions.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
@@ -752,7 +778,10 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                                         const coeffNum = parseFloat(String(b.coefficient || '').replace(/,/g, '.'));
                                         const w = parseFloat(wStr.replace(',', '.'));
                                         const h = parseFloat(hStr.replace(',', '.'));
-                                        if (!isNaN(p) && p > 0 && !isNaN(coeffNum) && coeffNum > 0 && !isNaN(w) && w > 0 && !isNaN(h) && h > 0) {
+                                        if (!isNaN(a) && a > 0 && !isNaN(coeffNum) && coeffNum > 0) {
+                                            const kg = a * coeffNum;
+                                            return <span title={`${a.toFixed(3)} m² = ${kg.toFixed(1)} kg`}>{`${a.toFixed(3)}`} m² = {`${kg.toFixed(1)}`} kg</span>;
+                                        } else if (!isNaN(p) && p > 0 && !isNaN(coeffNum) && coeffNum > 0 && !isNaN(w) && w > 0 && !isNaN(h) && h > 0) {
                                               const m2 = p * (w / 1000) * (h / 1000);
                                               const kg = m2 * coeffNum;
                                               return <span title={`${m2.toFixed(3)} m² = ${kg.toFixed(1)} kg`}>{m2.toFixed(3)} m² = {kg.toFixed(1)} kg</span>;
@@ -813,6 +842,19 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                                         className={cn(
                                           "flex-1 w-0 px-1 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
                                           calcValues[b.id as string]?.pieces ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
+                                        )}
+                                      />
+                                      <div className="flex items-center text-stone-400 text-[10px] font-bold px-0.5">LUB</div>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        min="0"
+                                        placeholder="m²"
+                                        value={(calcValues[b.id as string] || {}).area || ''}
+                                        onChange={(e) => handleCalcChange(b.id as string, 'area', e.target.value, b)}
+                                        className={cn(
+                                          "flex-1 w-0 px-1 py-1 border rounded-lg text-center font-bold text-xs transition-all outline-none min-w-0",
+                                          calcValues[b.id as string]?.area ? "bg-amber-50 border-amber-300 text-amber-700" : "bg-stone-50 border-stone-200"
                                         )}
                                       />
                                     </>
@@ -925,21 +967,6 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                 </div>
               </div>
 
-              <div className="p-6 bg-white border-t border-stone-200 shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.05)] flex items-center justify-between">
-                <div>
-                  <p className="text-[10px] font-black uppercase text-stone-400">Łącznie do pobrania</p>
-                  <p className="text-2xl font-black text-indigo-700 leading-none mt-1">
-                    {totalEnteredQty.toFixed(3)}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setIsConfirming(true)}
-                  disabled={totalEnteredQty <= 0 || isSubmitting}
-                  className="px-8 py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase tracking-wider hover:bg-indigo-700 disabled:opacity-40 transition-all shadow-lg shadow-indigo-600/20 active:scale-95"
-                >
-                  {isSubmitting ? 'Zatwierdzanie...' : 'Zatwierdź Przesunięcie'}
-                </button>
-              </div>
             </>
           )}
         </div>

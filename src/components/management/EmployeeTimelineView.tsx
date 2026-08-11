@@ -19,6 +19,7 @@ export const EmployeeTimelineView: React.FC<{
   const [logSource, setLogSource] = useState<'all' | 'hall' | 'manual'>('hall');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [editingLog, setEditingLog] = useState<WorkLog | null>(null);
+  const [isAddingGlobalLog, setIsAddingGlobalLog] = useState(false);
   const [addingLogForEmployee, setAddingLogForEmployee] = useState<Employee | null>(null);
 
   useEffect(() => {
@@ -184,6 +185,13 @@ export const EmployeeTimelineView: React.FC<{
               <ChevronRight size={18} />
             </button>
           </div>
+          <button 
+            onClick={() => setIsAddingGlobalLog(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white font-semibold text-xs rounded-lg shadow-sm hover:bg-emerald-700 transition-colors"
+          >
+            <Plus size={16} />
+            Dodaj meldunek
+          </button>
           <button 
             onClick={() => fetchLogsForDate(selectedDate)}
             className="p-2 bg-white border border-slate-200 text-slate-600 rounded-lg shadow-sm hover:bg-slate-50 hover:text-indigo-600 transition-colors"
@@ -402,8 +410,21 @@ export const EmployeeTimelineView: React.FC<{
           employeeId={addingLogForEmployee.id}
           employeeName={`${addingLogForEmployee.firstName} ${addingLogForEmployee.lastName}`}
           orders={[...orders, ...historicalOrders]}
+          initialDate={selectedDate}
           onClose={() => {
             setAddingLogForEmployee(null);
+            fetchLogsForDate(selectedDate);
+          }}
+        />
+      )}
+      
+      {isAddingGlobalLog && (
+        <AddLogModal 
+          employees={employees}
+          orders={[...orders, ...historicalOrders]}
+          initialDate={selectedDate}
+          onClose={() => {
+            setIsAddingGlobalLog(false);
             fetchLogsForDate(selectedDate);
           }}
         />

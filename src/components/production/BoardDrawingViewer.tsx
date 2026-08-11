@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { BoardDrawing, BoardDrawingElement } from '../../types';
 import { FlipVertical, FlipHorizontal, RotateCw, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -88,7 +89,7 @@ export function BoardDrawingViewer({ drawing, onElementClick, selectedElementIds
       if (!context) return;
       
       // Handle high DPI displays for sharper text
-      const outputScale = window.devicePixelRatio || 1;
+      const outputScale = (window.devicePixelRatio || 1) * 4; // Zwiększona rozdzielczość dla ostrego przybliżenia
       canvas.width = Math.floor(vp.width * outputScale);
       canvas.height = Math.floor(vp.height * outputScale);
       canvas.style.width = Math.floor(vp.width) + "px";
@@ -175,41 +176,13 @@ export function BoardDrawingViewer({ drawing, onElementClick, selectedElementIds
   const transformStyle = `rotate(${rotation}deg) scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1})`;
 
   return (
-    <div className="relative border border-stone-200 rounded-2xl overflow-hidden bg-stone-100 p-4 h-full flex flex-col min-h-0">
+    <div className="relative border border-stone-200 rounded-2xl overflow-hidden bg-stone-100 p-0 sm:p-4 h-full flex flex-col min-h-0">
       {/* Controls */}
-      <div className="flex flex-wrap justify-between items-center mb-4 gap-4">
+      <div className="hidden sm:flex flex-wrap justify-between items-center mb-4 gap-4 px-4 sm:px-0 pt-4 sm:pt-0">
         <h3 className="font-bold text-stone-800">Podgląd Rysunku</h3>
         
         <div className="flex items-center gap-2">
-          {/* Transform Controls */}
-          
-          {/* Zoom Controls */}
-          <div className="flex gap-1 bg-white p-1 border border-stone-200 rounded-lg shadow-sm mr-2">
-            <button 
-              onClick={() => setZoom(z => Math.max(0.5, z - 0.25))}
-              className="p-2 rounded-md text-stone-500 hover:bg-stone-100 transition-colors"
-              title="Oddal"
-            >
-              <ZoomOut size={18} />
-            </button>
-            <span className="flex items-center justify-center text-xs font-bold text-stone-500 w-12">
-              {Math.round(zoom * 100)}%
-            </span>
-            <button 
-              onClick={() => setZoom(z => Math.min(4, z + 0.25))}
-              className="p-2 rounded-md text-stone-500 hover:bg-stone-100 transition-colors"
-              title="Przybliż"
-            >
-              <ZoomIn size={18} />
-            </button>
-            <button 
-              onClick={() => setZoom(1)}
-              className="p-2 rounded-md text-stone-500 hover:bg-stone-100 transition-colors border-l border-stone-200 ml-1 pl-2"
-              title="Dopasuj do ekranu"
-            >
-              <Maximize size={18} />
-            </button>
-          </div>
+          {/* Zoom Controls handled inside TransformWrapper or omitted from top bar */}
           <div className="flex gap-1 bg-white p-1 border border-stone-200 rounded-lg shadow-sm mr-2">
             <button 
               onClick={() => setFlipY(!flipY)}
@@ -233,7 +206,6 @@ export function BoardDrawingViewer({ drawing, onElementClick, selectedElementIds
               <RotateCw size={18} />
             </button>
           </div>
-
           {/* Page Controls */}
           <div className="flex gap-2 items-center bg-white px-3 py-1 border border-stone-200 rounded-lg shadow-sm">
             <button 
@@ -254,53 +226,81 @@ export function BoardDrawingViewer({ drawing, onElementClick, selectedElementIds
           </div>
         </div>
       </div>
-
-      <div ref={containerRef} className="relative w-full flex-1 flex justify-center items-center bg-stone-200/50 shadow-inner border border-stone-200 rounded-lg overflow-auto p-4 min-h-0">
-        {/* Transform Container - applies to BOTH canvas and overlay markers */}
-        <div 
-          className="relative origin-center transition-transform duration-300" 
-          style={{ 
-            transform: transformStyle,
-            width: viewport ? `${viewport.width}px` : 'auto',
-            
-          }}
+      
+      <div ref={containerRef} className="relative w-full flex-1 flex justify-center items-center bg-stone-200/50 sm:shadow-inner sm:border border-stone-200 sm:rounded-lg overflow-hidden min-h-0">
+        <TransformWrapper
+          initialScale={1}
+          minScale={0.5}
+          maxScale={5}
+          centerOnInit={true}
+          wheel={{ step: 0.1 }}
+          pinch={{ step: 5 }}
         >
-          <canvas ref={canvasRef} className="block w-full bg-white shadow-md" />
-          
-          {/* Overlay markers */}
-          {viewport && drawing.elements.filter(e => e.page === currentPage).map(element => {
-            const { cx, cy } = getCanvasCoords(element.x, element.y);
-            const leftPercent = (cx / viewport.width) * 100;
-            const topPercent = (cy / viewport.height) * 100;
-            
-            return (
-              <button
-                key={element.id}
-                onClick={() => onElementClick(element)}
-                className={`absolute transform -translate-x-1/2 -translate-y-1/2 w-8 h-8 md:w-12 md:h-12 rounded-full border-2 flex items-center justify-center transition-all shadow-lg group cursor-pointer z-10 ${selectedElementIds.includes(element.id) ? 'border-emerald-600 scale-110 shadow-emerald-500/50 ring-4 ring-emerald-300' : 'border-stone-400 hover:scale-105'}`}
-                style={{ 
-                  left: `${leftPercent}%`, 
-                  top: `${topPercent}%`,
-                  ...getPieChartStyle(element, completedOperations[element.id] || [])
-                }}
-              >
-                {/* Inner white circle to make it look like a donut chart */}
-                <div className="w-1/2 h-1/2 bg-white rounded-full absolute shadow-inner" />
-                {/* 
-                  To keep the tooltip readable regardless of canvas flip/rotation, 
-                  we reverse the transform on the tooltip 
-                */}
+          {({ zoomIn, zoomOut, resetTransform }) => (
+            <>
+              {/* Floating controls for mobile & desktop inside the viewer */}
+              <div className="absolute top-4 left-4 z-20 flex flex-col sm:flex-row gap-1 bg-white/90 backdrop-blur-sm p-1 border border-stone-200 rounded-lg shadow-sm">
+                <button onClick={() => zoomOut()} className="p-2 rounded-md text-stone-500 hover:bg-stone-100"><ZoomOut size={20}/></button>
+                <button onClick={() => zoomIn()} className="p-2 rounded-md text-stone-500 hover:bg-stone-100"><ZoomIn size={20}/></button>
+                <button onClick={() => resetTransform()} className="p-2 rounded-md text-stone-500 hover:bg-stone-100 sm:border-l border-stone-200 sm:ml-1 sm:pl-2"><Maximize size={20}/></button>
+              </div>
+              
+              {/* Floating tools for mobile (flip, rotate, pages) */}
+              <div className="absolute top-4 right-4 z-20 flex sm:hidden flex-col gap-2">
+                 <div className="flex flex-col gap-1 bg-white/90 backdrop-blur-sm p-1 border border-stone-200 rounded-lg shadow-sm">
+                    <button onClick={() => setFlipY(!flipY)} className={`p-2 rounded-md transition-colors ${flipY ? 'bg-emerald-100 text-emerald-700' : 'text-stone-500'}`}><FlipVertical size={20} /></button>
+                    <button onClick={() => setFlipX(!flipX)} className={`p-2 rounded-md transition-colors ${flipX ? 'bg-emerald-100 text-emerald-700' : 'text-stone-500'}`}><FlipHorizontal size={20} /></button>
+                    <button onClick={() => setRotation((r) => (r + 90) % 360)} className="p-2 rounded-md text-stone-500"><RotateCw size={20} /></button>
+                 </div>
+                 <div className="flex flex-col gap-1 items-center bg-white/90 backdrop-blur-sm p-1 border border-stone-200 rounded-lg shadow-sm">
+                    <button disabled={currentPage <= 1} onClick={() => changePage(-1)} className="p-2 text-stone-500 disabled:opacity-50 font-bold">&lt;</button>
+                    <span className="text-xs font-semibold text-stone-700">{currentPage}/{pageCount}</span>
+                    <button disabled={currentPage >= pageCount} onClick={() => changePage(1)} className="p-2 text-stone-500 disabled:opacity-50 font-bold">&gt;</button>
+                 </div>
+              </div>
+
+              <TransformComponent wrapperStyle={{width: "100%", height: "100%"}}>
                 <div 
-                  className="hidden group-hover:block absolute top-full mt-2 bg-stone-900 text-white text-sm font-bold px-3 py-1.5 rounded-lg shadow-xl whitespace-nowrap z-20 pointer-events-none"
-                  style={{ transform: `scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1}) rotate(${-rotation}deg)` }}
+                  className="relative origin-center transition-transform duration-300" 
+                  style={{ 
+                    transform: transformStyle,
+                    width: viewport ? `${viewport.width}px` : 'auto',
+                  }}
                 >
-                  {element.name}
+                  <canvas ref={canvasRef} className="block w-full bg-white shadow-md" />
+                  
+                  {/* Overlay markers */}
+                  {viewport && drawing.elements.filter(e => e.page === currentPage).map(element => {
+                    const { cx, cy } = getCanvasCoords(element.x, element.y);
+                    const leftPercent = (cx / viewport.width) * 100;
+                    const topPercent = (cy / viewport.height) * 100;
+                    
+                    return (
+                      <button
+                        key={element.id}
+                        onClick={() => onElementClick(element)}
+                        className={`absolute transform -translate-x-1/2 -translate-y-1/2 w-10 h-10 md:w-12 md:h-12 rounded-full border-2 flex items-center justify-center transition-all shadow-lg group cursor-pointer z-10 ${selectedElementIds.includes(element.id) ? 'border-emerald-600 scale-110 shadow-emerald-500/50 ring-4 ring-emerald-300' : 'border-stone-400 hover:scale-105'}`}
+                        style={{ 
+                          left: `${leftPercent}%`, 
+                          top: `${topPercent}%`,
+                          ...getPieChartStyle(element, completedOperations[element.id] || [])
+                        }}
+                      >
+                        <div className="w-1/2 h-1/2 bg-white rounded-full absolute shadow-inner" />
+                        <div 
+                          className="hidden group-hover:block absolute top-full mt-2 bg-stone-900 text-white text-sm font-bold px-3 py-1.5 rounded-lg shadow-xl whitespace-nowrap z-20 pointer-events-none"
+                          style={{ transform: `scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1}) rotate(${-rotation}deg)` }}
+                        >
+                          {element.name}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
+              </TransformComponent>
+            </>
+          )}
+        </TransformWrapper>
+      </div>    </div>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, updateDoc, getDocs, doc, setDoc, serverTimestamp, writeBatch, Timestamp, query, where } from 'firebase/firestore';
+import { collection, updateDoc, getDocs, getDoc, doc, setDoc, serverTimestamp, writeBatch, Timestamp, query, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { FileText, ArrowLeft, Play, Square, User, Clock, CheckCircle2, Users, Search, List } from "lucide-react";
 import { Employee, ProductionOrder, WorkLog, BoardDrawing, BoardDrawingElement, WorkSession } from '../../types';
@@ -105,6 +105,9 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
       const sessionRef = doc(collection(db, 'workSessions'));
       await setDoc(sessionRef, {
         leaderId: operator.id,
+        leaderName: operator.displayName,
+        stationId: 'TABLICE',
+        stationName: 'Dział Tablic',
         memberIds: [operator.id, ...selectedCoworkers],
         department: 'Tablice',
         startTime: Timestamp.now(),
@@ -202,10 +205,21 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
       // Całkowity czas dzielimy równo na wybrane operacje (jeśli jest ich więcej niż 1)
       const timePerOp = totalManSeconds / validOps.length;
 
+      // Zlecenie mogło zostać zaimportowane jako 'completed' i nie znajdować się w `orders`, więc musimy je pobrać z bazy
+      const missingOrderIds = [...new Set(elementsToReport.map(e => e.mappedOrderId).filter(id => id && !orders.find(o => o.id === id)))];
+      const fetchedOrders: Record<string, ProductionOrder> = {};
+      for (const id of missingOrderIds) {
+        if (!id) continue;
+        const snap = await getDoc(doc(db, 'orders', id));
+        if (snap.exists()) {
+          fetchedOrders[id] = { ...snap.data(), id: snap.id } as ProductionOrder;
+        }
+      }
+
       const batch = writeBatch(db);
 
       for (const el of elementsToReport) {
-        const order = orders.find(o => o.id === el.mappedOrderId);
+        const order = orders.find(o => o.id === el.mappedOrderId) || (el.mappedOrderId ? fetchedOrders[el.mappedOrderId] : undefined);
         if (!order) continue;
 
         for (const opId of validOps) {
@@ -236,19 +250,21 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
               reportedQuantity: opValue,
               userId: emp.id,
               userName: emp.displayName || '',
-              startTime: currentSession.lastReportTime || currentSession.startTime,
+              startTime: startTime,
               endTime: endTime,
               duration: Math.round(perMemberTime),
               hours: Number((perMemberTime / 3600).toFixed(2)),
               quantity: 1, // 1 operation instance
               assortmentCategory: order.assortmentCategory || 'Inne',
-              sessionId: currentSession.id
+              sessionId: currentSession.id,
+              stationId: 'TABLICE',
+              stationName: 'Dział Tablic'
             });
           }
         }
         
         batch.update(doc(db, 'orders', order.id), {
-          status: 'production'
+          status: 'in-progress'
         });
       }
 
@@ -402,8 +418,8 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
             </div>
           </div>
         ) : (
-          <div className="flex flex-col h-full bg-white rounded-3xl p-6 border border-stone-200 shadow-sm">
-            <div className="flex items-center gap-4 mb-6">
+          <div className="fixed inset-0 z-50 lg:static lg:z-auto flex flex-col h-full bg-stone-100 lg:bg-white lg:rounded-3xl p-0 lg:p-6 lg:border border-stone-200 shadow-sm">
+            <div className="flex items-center gap-4 mb-0 lg:mb-6 bg-white p-4 lg:p-0 border-b border-stone-200 lg:border-none shadow-sm lg:shadow-none z-10">
               <button 
                 onClick={() => { setSelectedDrawing(null); setShowElementsList(false); }}
                 className="p-3 rounded-xl border border-stone-200 text-stone-600 hover:bg-stone-100 transition-colors"
@@ -416,8 +432,8 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
               </div>
             </div>
 
-            <div className="flex flex-col h-full gap-4">
-              <div className="flex justify-between items-center bg-stone-100 p-4 rounded-2xl border border-stone-200">
+            <div className="flex flex-col h-full gap-0 lg:gap-4 relative">
+              <div className="hidden lg:flex justify-between items-center bg-stone-100 p-4 rounded-2xl border border-stone-200">
                 <div>
                   <h3 className="font-bold text-stone-800">Zaznaczono paneli: <span className="text-emerald-600 text-xl">{selectedPanelIds.length}</span></h3>
                   <p className="text-xs text-stone-500">Kliknij elementy na rysunku, aby je zaznaczyć, a następnie zamelduj czas.</p>
@@ -432,8 +448,8 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
               </div>
 
               {!showElementsList ? (
-                <div className="flex-1 flex flex-col min-h-0">
-                  <div className="mb-4">
+                <div className="flex-1 flex flex-col min-h-0 relative">
+                  <div className="mb-0 lg:mb-4 hidden lg:block">
                     <button 
                       onClick={() => setShowElementsList(true)}
                       className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors border border-stone-200"
@@ -447,9 +463,33 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
                     selectedElementIds={selectedPanelIds}
                     completedOperations={completedOperations}
                   />
+                  
+                  {/* Floating Action Button (Mobile) */}
+                  <div className="lg:hidden absolute bottom-6 left-0 right-0 flex flex-col items-center gap-3 px-4 z-20 pointer-events-none">
+                    {selectedPanelIds.length > 0 && (
+                      <div className="bg-stone-900/80 backdrop-blur-sm text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg pointer-events-auto">
+                        Zaznaczono: {selectedPanelIds.length}
+                      </div>
+                    )}
+                    <div className="flex w-full gap-2 pointer-events-auto">
+                      <button 
+                        onClick={() => setShowElementsList(true)}
+                        className="flex-1 py-4 bg-white text-stone-700 font-bold rounded-2xl shadow-xl flex items-center justify-center gap-2 border border-stone-200"
+                      >
+                        <List size={20} /> Lista
+                      </button>
+                      <button 
+                        onClick={handleReportPanels}
+                        disabled={selectedPanelIds.length === 0 || reporting}
+                        className="flex-[2] py-4 bg-emerald-600 disabled:bg-stone-400 text-white font-bold rounded-2xl shadow-xl flex items-center justify-center gap-2"
+                      >
+                        {reporting ? 'Zapisywanie...' : 'Zamelduj panele'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ) : (
-                <div className="flex-1 flex flex-col bg-white rounded-2xl border border-stone-200 overflow-hidden">
+                <div className="absolute inset-0 z-30 lg:relative lg:inset-auto lg:z-auto flex-1 flex flex-col bg-white lg:rounded-2xl lg:border border-stone-200 overflow-hidden">
                   <div className="p-4 border-b border-stone-200 bg-stone-50 flex items-center justify-between">
                     <h3 className="font-bold text-stone-800 flex items-center gap-2">
                       <List className="text-emerald-500" /> Lista elementów rysunku
@@ -462,7 +502,7 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
                     </button>
                   </div>
                   <div className="flex-1 overflow-auto">
-                    <table className="w-full text-left text-sm">
+                    <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap">
                       <thead className="bg-stone-100 text-stone-600 sticky top-0">
                         <tr>
                           <th className="p-3 font-semibold border-b">Element (EPS)</th>
@@ -511,7 +551,7 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
                           </td>
                         </tr>
                       </tfoot>
-                    </table>
+                    </table></div>
                   </div>
                 </div>
               )}

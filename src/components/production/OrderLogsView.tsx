@@ -905,6 +905,7 @@ export function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: P
   };
 
   const handleSave = async () => {
+
     const start = new Date(startTimeStr);
     const end = endTimeStr ? new Date(endTimeStr) : null;
     const safeQuantity = isNaN(Number(quantity)) ? 0 : Number(quantity);
@@ -1153,7 +1154,9 @@ export function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: P
   );
 }
 
-export function AddLogModal({ employeeId, employeeName, orders, onClose }: { employeeId: string, employeeName: string, orders: ProductionOrder[], onClose: () => void }) {
+export function AddLogModal({ employeeId, employeeName, employees, orders, onClose, initialDate }: { employeeId?: string, employeeName?: string, employees?: any[], orders: ProductionOrder[], onClose: () => void, initialDate?: Date }) {
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState(employeeId || '');
+  const [selectedEmployeeName, setSelectedEmployeeName] = useState(employeeName || '');
   const [quantity, setQuantity] = useState(0);
   const [category, setCategory] = useState('');
   const [selectedOrderId, setSelectedOrderId] = useState('');
@@ -1161,6 +1164,9 @@ export function AddLogModal({ employeeId, employeeName, orders, onClose }: { emp
   const [isManual, setIsManual] = useState(true);
   
   const now = new Date();
+  if (initialDate) {
+    now.setFullYear(initialDate.getFullYear(), initialDate.getMonth(), initialDate.getDate());
+  }
   const [startTimeStr, setStartTimeStr] = useState(formatDateForInput(now));
   const [endTimeStr, setEndTimeStr] = useState(formatDateForInput(now));
 
@@ -1254,14 +1260,15 @@ export function AddLogModal({ employeeId, employeeName, orders, onClose }: { emp
         if (selectedOrderId && newOrderSnap && newOrderSnap.exists()) {
           const newOrderRef = doc(db, 'orders', selectedOrderId);
           const newData = newOrderSnap.data();
+          orderNameForLog = newData.orderNumber;
           const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(newData, selectedElementId, safeQuantity);
           transaction.update(newOrderRef, { appReportedQuantity: newAppQty, status: newStatus, elements: newElements });
         }
 
         const logRef = doc(collection(db, 'workLogs'));
         transaction.set(logRef, {
-          userId: employeeId,
-          userName: employeeName,
+          userId: selectedEmployeeId,
+          userName: selectedEmployeeName,
           quantityReported: safeQuantity,
           assortmentCategory: category || null,
           orderId: selectedOrderId || null,
@@ -1305,8 +1312,27 @@ export function AddLogModal({ employeeId, employeeName, orders, onClose }: { emp
           {/* Pracownik */}
           <div className="flex items-center gap-3">
             <label className="w-24 text-[9px] font-black uppercase tracking-wider text-stone-400 text-left shrink-0">Pracownik</label>
-            <div className="flex-1 min-w-0 p-1.5 px-2 bg-stone-50 border border-stone-200 rounded-lg text-stone-600 font-medium text-sm">
-              {employeeName}
+            <div className="flex-1 min-w-0">
+              {employeeId && employeeName ? (
+                <div className="p-1.5 px-2 bg-stone-50 border border-stone-200 rounded-lg text-stone-600 font-medium text-sm">
+                  {employeeName}
+                </div>
+              ) : (
+                <select
+                  value={selectedEmployeeId}
+                  onChange={(e) => {
+                    const emp = employees?.find(em => em.id === e.target.value);
+                    setSelectedEmployeeId(e.target.value);
+                    setSelectedEmployeeName(emp ? `${emp.firstName} ${emp.lastName}` : '');
+                  }}
+                  className="w-full p-1.5 px-2 bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-medium text-stone-700 text-sm"
+                >
+                  <option value="">Wybierz pracownika...</option>
+                  {employees?.map(emp => (
+                    <option key={emp.id} value={emp.id}>{emp.lastName} {emp.firstName}</option>
+                  ))}
+                </select>
+              )}
             </div>
           </div>
 
