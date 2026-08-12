@@ -358,7 +358,10 @@ export function MainDashboard(props: MainDashboardProps) {
     }
   };
 
-  const combinedOrdersToDisplay = [...filteredOrders, ...archivedOrders];
+  const combinedOrdersMap = new Map<string, ProductionOrder>();
+  filteredOrders.forEach(o => combinedOrdersMap.set(o.id, o));
+  archivedOrders.forEach(o => combinedOrdersMap.set(o.id, o));
+  const combinedOrdersToDisplay = Array.from(combinedOrdersMap.values());
 
   const SidebarItem = ({ active, onClick, icon, text, right }: any) => (
     <button 
@@ -636,10 +639,16 @@ export function MainDashboard(props: MainDashboardProps) {
                         const updateData: any = { elements, totalWeight };
                         if (appReportedQty !== undefined) {
                           updateData.appReportedQuantity = Number(appReportedQty.toFixed(3));
-                          const currentOrder = props.orders.find(o => o.id === id);
-                          if (currentOrder) {
-                            const currentErpQty = currentOrder.erpReportedQuantity || currentOrder.reportedQuantity || 0;
-                            updateData.status = calculateOrderStatus(currentErpQty, updateData.appReportedQuantity, currentOrder.targetQuantity || 1);
+                          const targetOrder = props.orders.find(o => o.id === id) || (editingOrderElements as any);
+                          if (targetOrder) {
+                            const currentErpQty = targetOrder.erpReportedQuantity || targetOrder.reportedQuantity || 0;
+                            updateData.status = calculateOrderStatus(
+                              currentErpQty, 
+                              updateData.appReportedQuantity, 
+                              targetOrder.targetQuantity || 1,
+                              false,
+                              elements
+                            );
                           }
                         }
                         await updateDoc(doc(db, 'orders', id), updateData);

@@ -43,7 +43,7 @@ export function ManualEntryForm({
   const [isSearchingArchive, setIsSearchingArchive] = useState(false);
 
   // Połączone listy do wyboru
-  const availableOrders = [...orders, ...archivedOrders];
+  const availableOrders = Array.from(new Map([...orders, ...archivedOrders].map(o => [o.id, o])).values());
   const selectedOrder = availableOrders.find(o => o.id === orderId);
 
   const handleOrderSearch = async (term: string) => {

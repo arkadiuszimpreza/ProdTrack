@@ -309,7 +309,7 @@ export const OrderCard: React.FC<OrderCardProps> = ({
       <div className="mt-6 z-0">
         <button 
           onClick={onStart}
-          disabled={disabled || isWorking || allElementsCompleted || order.status === 'completed'}
+          disabled={disabled || isWorking || allElementsCompleted}
           className={cn(
             "w-full flex items-center justify-center gap-2 py-3 rounded-2xl font-bold transition-all active:scale-95",
             isWorking 

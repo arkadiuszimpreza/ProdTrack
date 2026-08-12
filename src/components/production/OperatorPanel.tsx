@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { format } from 'date-fns';
 import { 
   Clock, 
@@ -147,15 +148,49 @@ export function OperatorPanel({
   };
   // ---------------------------------------------------------
 
+  const [searchedArchivedOrders, setSearchedArchivedOrders] = useState<ProductionOrder[]>([]);
+
+  useEffect(() => {
+    const trimmed = searchTerm.trim();
+    if (trimmed.length < 3) {
+      setSearchedArchivedOrders([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const q1 = query(collection(db, 'orders'), where('orderNumber', '==', trimmed));
+        const q2 = query(collection(db, 'orders'), where('erpOrderNumber', '==', trimmed));
+
+        const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+
+        const foundMap = new Map<string, ProductionOrder>();
+        snap1.docs.forEach(docSnap => foundMap.set(docSnap.id, { ...docSnap.data(), id: docSnap.id } as ProductionOrder));
+        snap2.docs.forEach(docSnap => foundMap.set(docSnap.id, { ...docSnap.data(), id: docSnap.id } as ProductionOrder));
+
+        setSearchedArchivedOrders(Array.from(foundMap.values()));
+      } catch (err) {
+        console.error('Error fetching archived orders for terminal search:', err);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
   const filteredOrders = orders
-    .filter(o => o.status !== 'completed' && o.status !== 'reported')
+    .filter(o => !searchTerm.trim() ? (o.status !== 'completed' && o.status !== 'reported') : true)
     .filter(order => {
       const terms = parseSearchTerms(searchTerm);
       if (terms.length === 0) return true;
       const searchableText = `${order.orderNumber} ${order.erpOrderNumber || ''} ${order.productName} ${order.projectNumber || ''} ${order.articleNumber || ''} ${order.clientName || ''}`;
       return matchesAllTerms(searchableText, terms);
-    })
-    .slice(0, 6);
+    });
+
+  const combinedOrdersMap = new Map<string, ProductionOrder>();
+  filteredOrders.forEach(o => combinedOrdersMap.set(o.id, o));
+  searchedArchivedOrders.forEach(o => combinedOrdersMap.set(o.id, o));
+
+  const displayOrders = Array.from(combinedOrdersMap.values()).slice(0, 6);
 
   return (
     <div className="min-h-screen bg-stone-50 flex items-center justify-center p-6">
@@ -311,13 +346,13 @@ export function OperatorPanel({
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 text-left">
-              {filteredOrders.length === 0 ? (
+              {displayOrders.length === 0 ? (
                 <div className="col-span-full bg-stone-50 border-2 border-dashed border-stone-200 rounded-3xl p-12 text-center text-stone-400">
                   <div className="flex justify-center mb-4 opacity-20"><Search size={48} /></div>
                   <p>Nie znaleziono zleceń pasujących do zapytania.</p>
                 </div>
               ) : (
-                filteredOrders.map(order => (
+                displayOrders.map(order => (
                   <OrderCard 
                     key={order.id} 
                     order={order} 

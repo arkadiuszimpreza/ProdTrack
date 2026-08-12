@@ -12,20 +12,27 @@ export function calculateOrderStatus(
   erpQty: number,
   appQty: number,
   targetQty: number,
-  isActive: boolean = false
+  isActive: boolean = false,
+  elements?: any[]
 ): ProductionOrder['status'] {
-  // Bezwzględny warunek ERP
-  if (erpQty >= targetQty && targetQty > 0) {
+  const hasElements = Array.isArray(elements) && elements.length > 0;
+  const hasIncompleteElements = hasElements
+    ? elements.some((el: any) => (el.reportedQuantity || 0) < (el.quantity || 1))
+    : false;
+
+  // Sprawdzamy kompletność meldunków
+  const isAppComplete = targetQty > 0 && appQty >= targetQty && !hasIncompleteElements;
+  const isErpComplete = targetQty > 0 && erpQty >= targetQty && !hasIncompleteElements && (appQty >= targetQty || appQty === 0);
+
+  if (isErpComplete) {
     return 'completed';
   }
   
-  // Warunek pracy w hali produkcyjnej (Zameldowane)
-  if (appQty >= targetQty && targetQty > 0) {
+  if (isAppComplete) {
     return 'reported';
   }
   
-  // Warunek w toku
-  if (appQty > 0 || isActive) {
+  if (appQty > 0 || isActive || (hasElements && elements.some((el: any) => (el.reportedQuantity || 0) > 0))) {
     return 'in-progress';
   }
   
@@ -65,7 +72,13 @@ export function applyLogImpactToOrder(
   const newAppQty = Math.max(0, (orderData.appReportedQuantity || 0) + weightedDelta);
   let newStatus = orderData.status || 'pending';
   if (orderData.targetQuantity !== undefined) { 
-     newStatus = calculateOrderStatus(orderData.erpReportedQuantity || 0, Number(newAppQty.toFixed(3)), orderData.targetQuantity);
+     newStatus = calculateOrderStatus(
+       orderData.erpReportedQuantity || 0, 
+       Number(newAppQty.toFixed(3)), 
+       orderData.targetQuantity,
+       false,
+       updatedElements
+     );
   }
 
   return { newAppQty: Number(newAppQty.toFixed(3)), newElements: updatedElements, newStatus };

@@ -817,7 +817,7 @@ export function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: P
   const [archivedOrders, setArchivedOrders] = useState<ProductionOrder[]>([]);
   const [isSearchingArchive, setIsSearchingArchive] = useState(false);
 
-  const availableOrders = [...orders, ...archivedOrders];
+  const availableOrders = Array.from(new Map([...orders, ...archivedOrders].map(o => [o.id, o])).values());
   const selectedOrder = availableOrders.find(o => o.id === selectedOrderId);
   const selectedOrderElements = selectedOrder?.elements || [];
 
@@ -1177,7 +1177,7 @@ export function AddLogModal({ employeeId, employeeName, employees, orders, onClo
   const [archivedOrders, setArchivedOrders] = useState<ProductionOrder[]>([]);
   const [isSearchingArchive, setIsSearchingArchive] = useState(false);
 
-  const availableOrders = [...orders, ...archivedOrders];
+  const availableOrders = Array.from(new Map([...orders, ...archivedOrders].map(o => [o.id, o])).values());
   const selectedOrder = availableOrders.find(o => o.id === selectedOrderId);
   const selectedOrderElements = selectedOrder?.elements || [];
 

@@ -509,7 +509,7 @@ function EditLogModal({ log, orders, onClose }: { log: WorkLog, orders: Producti
   const [archivedOrders, setArchivedOrders] = useState<ProductionOrder[]>([]);
   const [isSearchingArchive, setIsSearchingArchive] = useState(false);
 
-  const availableOrders = [...orders, ...archivedOrders];
+  const availableOrders = Array.from(new Map([...orders, ...archivedOrders].map(o => [o.id, o])).values());
   const selectedOrder = availableOrders.find(o => o.id === selectedOrderId);
   const selectedOrderElements = selectedOrder?.elements || [];
 

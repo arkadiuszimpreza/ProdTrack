@@ -39,7 +39,7 @@ export function BulkManualEntryForm({
   const [archivedOrders, setArchivedOrders] = useState<ProductionOrder[]>([]);
   const [isSearchingArchive, setIsSearchingArchive] = useState(false);
   
-  const availableOrders = [...orders, ...archivedOrders];
+  const availableOrders = Array.from(new Map([...orders, ...archivedOrders].map(o => [o.id, o])).values());
 
   const handleOrderSearch = async (term: string) => {
     if (term.length === 6) {

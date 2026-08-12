@@ -397,7 +397,7 @@ export const EmployeeTimelineView: React.FC<{
       {editingLog && (
         <EditLogModal 
           log={editingLog} 
-          orders={[...orders, ...historicalOrders]} 
+          orders={Array.from(new Map([...orders, ...historicalOrders].map(o => [o.id, o])).values())} 
           onClose={() => {
             setEditingLog(null);
             fetchLogsForDate(selectedDate); // Refresh logs after editing
@@ -409,7 +409,7 @@ export const EmployeeTimelineView: React.FC<{
         <AddLogModal 
           employeeId={addingLogForEmployee.id}
           employeeName={`${addingLogForEmployee.firstName} ${addingLogForEmployee.lastName}`}
-          orders={[...orders, ...historicalOrders]}
+          orders={Array.from(new Map([...orders, ...historicalOrders].map(o => [o.id, o])).values())}
           initialDate={selectedDate}
           onClose={() => {
             setAddingLogForEmployee(null);
@@ -421,7 +421,7 @@ export const EmployeeTimelineView: React.FC<{
       {isAddingGlobalLog && (
         <AddLogModal 
           employees={employees}
-          orders={[...orders, ...historicalOrders]}
+          orders={Array.from(new Map([...orders, ...historicalOrders].map(o => [o.id, o])).values())}
           initialDate={selectedDate}
           onClose={() => {
             setIsAddingGlobalLog(false);
