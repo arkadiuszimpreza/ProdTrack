@@ -66,6 +66,7 @@ export function OperatorPanel({
 
   // DODANE: Blokada ekranu, żeby operator nie wyklikał 5 zleceń z rzędu w ułamek sekundy
   const [isProcessing, setIsProcessing] = useState(false);
+  const isProcessingRef = React.useRef(false);
 
   // --- Automatyczne wylogowanie ---
   useEffect(() => {
@@ -98,51 +99,58 @@ export function OperatorPanel({
 
   // --- BEZPIECZNE FUNKCJE (Z Blokadą "Szybkiego Palca") ---
   const handleStartWork = async (order: ProductionOrder, element?: OrderElement) => {
-    if (isProcessing) return;
-
-    // Jeśli zlecenie ma elementy, a my jeszcze żadnego nie wybraliśmy
+    if (isProcessingRef.current) return;
+    
     if (order.elements && order.elements.length > 0 && !element) {
       setSelectingElementOrder(order);
       return;
     }
 
+    isProcessingRef.current = true;
     setIsProcessing(true);
     try {
       await onStartWork(order, element);
       if (selectingElementOrder) setSelectingElementOrder(null);
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };
 
   const handleStopWork = async (reports?: any) => {
-    if (isProcessing) return;
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
     setIsProcessing(true);
     try {
-      await onStopWork(reports);
+await onStopWork(reports);
       setMode(null); // Wraca do głównego menu po zakończeniu zlecenia!
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };
 
   const handleStartTeamWork = async (station: WorkStation) => {
-    if (isProcessing) return;
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
     setIsProcessing(true);
     try {
-      await onStartTeamWork(station);
+await onStartTeamWork(station);
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };
 
   const handleJoinTeam = async (session: WorkSession) => {
-    if (isProcessing) return;
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
     setIsProcessing(true);
     try {
-      await onJoinTeam(session);
+await onJoinTeam(session);
       setMode(null); // Wraca do głównego menu po dołączeniu
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };

@@ -144,26 +144,24 @@ export function BoardDrawingViewer({ drawing, onElementClick, selectedElementIds
   };
 
 
-  const getPieChartStyle = (element: BoardDrawingElement, completedOps: string[] = []) => {
+  const getSquareProgressStyle = (element: BoardDrawingElement, completedOps: string[] = []) => {
     const isMultiPanel = (element.locksLength || 0) > 0;
-    const totalOps = isMultiPanel ? 5 : 4;
     const opNames = isMultiPanel 
-      ? ['Wycinanie tab WS', 'Wklejanie zamków', 'Wklejanie profila tablicy WS', 'Oklejanie tab WS', 'Oprawanie tablic']
-      : ['Wycinanie tab WS', 'Wklejanie profila tablicy WS', 'Oklejanie tab WS', 'Oprawanie tablic'];
+      ? ['Wycinanie tab WS', 'Wklejanie zamków', 'Wklejanie profila tablicy WS', 'Oklejanie tab WS', 'Oprawanie tablic', 'Pakowanie (nowa operacja)']
+      : ['Wycinanie tab WS', 'Wklejanie profila tablicy WS', 'Oklejanie tab WS', 'Oprawanie tablic', 'Pakowanie (nowa operacja)'];
     
+    const totalOps = opNames.length;
     const step = 100 / totalOps;
-    let gradient = 'conic-gradient(';
+    
+    let gradient = 'linear-gradient(to top, ';
     
     opNames.forEach((opName, index) => {
       const isCompleted = completedOps.includes(opName);
-      // We will use semi-transparent background to let the canvas show through?
-      // Actually, since it's a marker, we can use a solid color but we can add a border to separate slices.
-      // A conic-gradient doesn't support borders between slices easily, but we can fake it with transparent gaps if we want.
-      // Let's use simple colors.
-      const color = isCompleted ? '#10b981' : 'rgba(255,255,255,0.8)';
+      const color = isCompleted ? '#10b981' : 'rgba(255,255,255,0.95)';
       const start = index * step;
       const end = (index + 1) * step;
-      // Add a tiny gap by adjusting percentages? No, let's keep it simple.
+      
+      // Using distinct color blocks for each step
       gradient += `${color} ${start}%, ${color} ${end}%`;
       if (index < opNames.length - 1) gradient += ', ';
     });
@@ -279,14 +277,20 @@ export function BoardDrawingViewer({ drawing, onElementClick, selectedElementIds
                       <button
                         key={element.id}
                         onClick={() => onElementClick(element)}
-                        className={`absolute transform -translate-x-1/2 -translate-y-1/2 w-10 h-10 md:w-12 md:h-12 rounded-full border-2 flex items-center justify-center transition-all shadow-lg group cursor-pointer z-10 ${selectedElementIds.includes(element.id) ? 'border-emerald-600 scale-110 shadow-emerald-500/50 ring-4 ring-emerald-300' : 'border-stone-400 hover:scale-105'}`}
+                        className={`absolute transform -translate-x-1/2 -translate-y-1/2 w-8 h-8 md:w-10 md:h-10 rounded-md border-2 flex items-center justify-center transition-all shadow-lg group cursor-pointer z-10 ${selectedElementIds.includes(element.id) ? 'border-emerald-600 scale-110 shadow-emerald-500/50 ring-4 ring-emerald-300' : 'border-stone-400 hover:scale-105'}`}
                         style={{ 
                           left: `${leftPercent}%`, 
                           top: `${topPercent}%`,
-                          ...getPieChartStyle(element, completedOperations[element.id] || [])
+                          ...getSquareProgressStyle(element, completedOperations[element.id] || [])
                         }}
                       >
-                        <div className="w-1/2 h-1/2 bg-white rounded-full absolute shadow-inner" />
+                        {/* Dynamic horizontal dividers */}
+                        <div className="absolute inset-0 flex flex-col justify-evenly pointer-events-none opacity-20">
+                           {Array.from({ length: (element.locksLength || 0) > 0 ? 5 : 4 }).map((_, i) => (
+                             <div key={i} className="w-full h-[1px] bg-stone-800"></div>
+                           ))}
+                        </div>
+
                         <div 
                           className="hidden group-hover:block absolute top-full mt-2 bg-stone-900 text-white text-sm font-bold px-3 py-1.5 rounded-lg shadow-xl whitespace-nowrap z-20 pointer-events-none"
                           style={{ transform: `scale(${flipX ? -1 : 1}, ${flipY ? -1 : 1}) rotate(${-rotation}deg)` }}

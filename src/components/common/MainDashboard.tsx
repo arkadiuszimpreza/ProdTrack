@@ -40,6 +40,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { DocsView } from '../administracja/DocsView';
 import { LiveWorkView } from '../production/LiveWorkView';
 import { OrderLogsView } from '../production/OrderLogsView';
+import { ClientOrderSummaryView } from '../management/ClientOrderSummaryView';
 
 // IMPORTY WMS
 import { ExpectedDeliveriesView } from '../wms/ExpectedDeliveriesView';
@@ -120,6 +121,7 @@ export function MainDashboard(props: MainDashboardProps) {
   
   // NOWY STAN DLA PODGLĄDU LOGÓW ZLECENIA
   const [viewingOrderLogs, setViewingOrderLogs] = useState<ProductionOrder | null>(null);
+  const [viewingClientOrderSummary, setViewingClientOrderSummary] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const [itemToReceive, setItemToReceive] = useState<any | null>(null);
@@ -664,8 +666,18 @@ export function MainDashboard(props: MainDashboardProps) {
                     orders={props.orders} 
                     employees={props.employees}
                     onClose={() => setViewingOrderLogs(null)} 
+                    onShowClientLogs={(erpOrderNumber) => setViewingClientOrderSummary(erpOrderNumber)}
                   />
                 )}
+                {viewingClientOrderSummary && (
+                  <ClientOrderSummaryView
+                    erpOrderNumber={viewingClientOrderSummary}
+                    orders={[...props.orders, ...archivedOrders]}
+                    employees={props.employees}
+                    onClose={() => setViewingClientOrderSummary(null)}
+                  />
+                )}
+
                 {selectingElementOrder && <ElementSelectionModal order={selectingElementOrder} onSelect={async (el) => { await props.onStartWork(selectingElementOrder, el); setSelectingElementOrder(null); }} onCancel={() => setSelectingElementOrder(null)} />}
                 {itemToReceive && <ReceiveDeliveryModal item={itemToReceive} onClose={() => setItemToReceive(null)} onSave={handleSaveManualBatch} />}
               </AnimatePresence>
@@ -737,7 +749,8 @@ export function MainDashboard(props: MainDashboardProps) {
                           onStart={() => { if (order.elements && order.elements.length > 0) setSelectingElementOrder(order); else props.onStartWork(order); }} 
                           onDelete={() => props.onDeleteOrder(order.id)} 
                           onEditElements={() => setEditingOrderElements(order)}
-                          onShowLogs={() => setViewingOrderLogs(order)} 
+                          onShowLogs={() => setViewingOrderLogs(order)}
+                          onShowClientLogs={() => setViewingClientOrderSummary(order.erpOrderNumber!)} 
                           isWorking={props.activeLog?.orderId === order.id} 
                           disabled={!!props.activeLog && props.activeLog.orderId !== order.id}
                           isAdmin={props.isAdmin} 

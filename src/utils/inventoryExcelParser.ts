@@ -120,7 +120,7 @@ export const parseZakupyInfo = async (file: File): Promise<PurchaseOrderItem[]> 
           const projectNumber = String(getVal(row, ['Projekt-nr', 'Projekt', 'ZP-nr', 'ZP']) || '').trim();
 
           const item: PurchaseOrderItem = {
-            id: `PO-${procesNr}-${pozNr}`,
+            id: `PO-${procesNr.replace(/[\/]/g, '_')}-${pozNr.replace(/[\/]/g, '_')}`,
             purchaseOrderNumber: procesNr,
             positionNumber: pozNr,
             supplierName: supplierName, 

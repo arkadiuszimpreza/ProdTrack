@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, Clock, List, Trash2, ChevronRight, AlertTriangle, CheckCircle, Settings } from 'lucide-react';
+import { Play, Layers, Clock, List, Trash2, ChevronRight, AlertTriangle, CheckCircle, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { Timestamp, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -15,6 +15,7 @@ interface OrderCardProps {
   onDelete: () => void | Promise<void>;
   onEditElements: () => void;
   onShowLogs?: () => void;
+  onShowClientLogs?: () => void;
   isWorking: boolean;
   disabled: boolean;
   isAdmin: boolean;
@@ -27,6 +28,7 @@ export const OrderCard: React.FC<OrderCardProps> = ({
   onDelete, 
   onEditElements, 
   onShowLogs,
+  onShowClientLogs,
   isWorking, 
   disabled, 
   isAdmin, 
@@ -90,9 +92,18 @@ export const OrderCard: React.FC<OrderCardProps> = ({
                 ZP: {order.orderNumber}
               </span>
               {order.erpOrderNumber && (
-                <span className="text-[10px] font-black uppercase tracking-widest text-stone-600 bg-stone-100 px-2 py-0.5 rounded-md border border-stone-200">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (onShowClientLogs) onShowClientLogs();
+                  }}
+                  title="Kliknij, aby otworzyć podsumowanie dla Zlecenia Klienta"
+                  className="text-[10px] font-black uppercase tracking-widest text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+                >
+                  <Layers size={10} />
                   ZL: {order.erpOrderNumber}
-                </span>
+                </button>
               )}
             </div>
             {order.articleNumber && <span className="text-[10px] text-stone-400 font-mono">{order.articleNumber}</span>}
@@ -137,8 +148,16 @@ export const OrderCard: React.FC<OrderCardProps> = ({
                           onClick={() => { setShowMenu(false); if(onShowLogs) onShowLogs(); }} 
                           className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-stone-600 hover:bg-stone-50 hover:text-blue-600 text-left transition-colors"
                         >
-                          <Clock size={14} /> Historia meldunków
+                          <Clock size={14} /> Historia meldunków ZP
                         </button>
+                        {order.erpOrderNumber && (
+                          <button 
+                            onClick={() => { setShowMenu(false); if(onShowClientLogs) onShowClientLogs(); }} 
+                            className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-stone-600 hover:bg-stone-50 hover:text-purple-600 text-left transition-colors"
+                          >
+                            <Layers size={14} /> Podsumowanie Zlec. Klienta
+                          </button>
+                        )}
                         <button 
                           onClick={() => { setShowMenu(false); onEditElements(); }} 
                           className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-stone-600 hover:bg-stone-50 hover:text-emerald-600 text-left transition-colors"

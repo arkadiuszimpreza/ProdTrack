@@ -22,7 +22,8 @@ export const TABLICA_OPERATIONS = [
   { id: 'zamki', name: 'Wklejanie zamków', getValue: (e: BoardDrawingElement) => e.locksLength || 0, unit: 'mb' },
   { id: 'profil', name: 'Wklejanie profila tablicy WS', getValue: (e: BoardDrawingElement) => e.profilesLength || 0, unit: 'mb' },
   { id: 'oklejanie', name: 'Oklejanie tab WS', getValue: (e: BoardDrawingElement) => e.areaSquareMeters || 0, unit: 'm2' },
-  { id: 'oprawa', name: 'Oprawanie tablic', getValue: (e: BoardDrawingElement) => e.frameLength || 0, unit: 'mb' }
+  { id: 'oprawa', name: 'Oprawanie tablic', getValue: (e: BoardDrawingElement) => e.frameLength || 0, unit: 'mb' },
+  { id: 'pakowanie', name: 'Pakowanie (nowa operacja)', getValue: (e: BoardDrawingElement) => 1, unit: 'szt' }
 ];
 
 export function OperatorPanelTablice({ operator, orders, activeSessions, onLogout, onBackToOperator }: Props) {

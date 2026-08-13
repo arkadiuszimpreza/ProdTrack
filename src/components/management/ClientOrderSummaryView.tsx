@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   X, Clock, User as UserIcon, Package, ArrowUp, ArrowDown, Pencil, Save, Trash2, Search, ChevronLeft,
-  BarChart2, Users, ChevronDown, ChevronUp, Scale, AlertCircle, Hash, Tablet, PenTool, Layers, TrendingUp, Plus, RefreshCw
+  BarChart2, Users, ChevronDown, ChevronUp, Scale, AlertCircle, Hash, Tablet, PenTool, Layers, TrendingUp, Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, query, where, getDocs, Timestamp, doc, runTransaction, serverTimestamp, or, getDocFromServer, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp, doc, runTransaction, serverTimestamp, or, getDocFromServer } from 'firebase/firestore';
 import { format } from 'date-fns';
 import { pl } from 'date-fns/locale';
 
@@ -16,12 +16,11 @@ import { parseSearchTerms, matchesAllTerms } from '../../utils/search';
 
 const HOURLY_RATE = 65.00;
 
-interface OrderLogsViewProps {
-  order: ProductionOrder;
-  orders: ProductionOrder[]; // Potrzebne do modala edycji
+interface ClientOrderSummaryViewProps {
+  erpOrderNumber: string;
+  orders: ProductionOrder[];
   employees: Employee[];
   onClose: () => void;
-  onShowClientLogs?: (erpOrderNumber: string) => void;
 }
 
 interface WorkerStat {
@@ -65,7 +64,8 @@ const getCostPerKgBg = (cpk: number | null) => {
   return 'bg-red-50 border-red-200';
 };
 
-export function OrderLogsView({ order, orders, employees, onClose, onShowClientLogs }: OrderLogsViewProps) {
+export function ClientOrderSummaryView({ erpOrderNumber, orders, employees, onClose }: ClientOrderSummaryViewProps) {
+  const clientOrders = useMemo(() => orders.filter(o => o.erpOrderNumber === erpOrderNumber), [orders, erpOrderNumber]);
   const [logs, setLogs] = useState<WorkLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingLog, setEditingLog] = useState<WorkLog | null>(null);
@@ -78,8 +78,6 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
   const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
   const [isDeletingMultiple, setIsDeletingMultiple] = useState(false);
   const [confirmMultiDeleteDialog, setConfirmMultiDeleteDialog] = useState(false);
-  const [confirmRecalculateDialog, setConfirmRecalculateDialog] = useState(false);
-  const [isRecalculating, setIsRecalculating] = useState(false);
   
   const toggleLogSelection = (logId: string) => {
     if (!logId) return;
@@ -107,36 +105,46 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
   const executeDeleteSelected = async () => {
     setConfirmMultiDeleteDialog(false);
     setIsDeletingMultiple(true);
+    
     try {
       await runTransaction(db, async (transaction) => {
-        // Obliczamy ile odjąć od quantity ordera
-        let orderRef = doc(db, "orders", order.id);
-        let orderSnap = await transaction.get(orderRef);
-        let orderData = orderSnap.exists() ? orderSnap.data() : null;
-
-        if (orderData) {
-          for (const logId of Array.from(selectedLogIds)) {
-            const log = logs.find(l => l.id === logId);
-            if (log && log.quantityReported) { 
-               const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(orderData, log.elementId, -log.quantityReported);
-               orderData.appReportedQuantity = newAppQty;
-               orderData.elements = newElements;
-               orderData.status = newStatus;
-            }
+        const orderUpdates = new Map<string, any>();
+        
+        for (const logId of Array.from(selectedLogIds)) {
+          const log = logs.find(l => l.id === logId);
+          if (log && log.quantityReported && log.orderId) {
+             let orderData = orderUpdates.get(log.orderId);
+             if (!orderData) {
+                 const orderRef = doc(db, "orders", log.orderId);
+                 const orderSnap = await transaction.get(orderRef);
+                 if (orderSnap.exists()) {
+                     orderData = orderSnap.data();
+                     orderUpdates.set(log.orderId, orderData);
+                 }
+             }
+             if (orderData) {
+                 const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(orderData, log.elementId, -log.quantityReported);
+                 orderData.appReportedQuantity = newAppQty;
+                 orderData.elements = newElements;
+                 orderData.status = newStatus;
+             }
           }
-          transaction.update(orderRef, { 
-             appReportedQuantity: orderData.appReportedQuantity,
-             status: orderData.status,
-             elements: orderData.elements
-          });
         }
+        
+        // Write order updates
+        orderUpdates.forEach((data, oId) => {
+            transaction.update(doc(db, "orders", oId), {
+               appReportedQuantity: data.appReportedQuantity,
+               status: data.status,
+               elements: data.elements
+            });
+        });
 
         for (const logId of Array.from(selectedLogIds)) {
           const logRef = doc(db, 'workLogs', logId);
           transaction.delete(logRef);
         }
       });
-      
       // Update local state without re-fetching
       setLogs(prev => prev.filter(l => !l.id || !selectedLogIds.has(l.id)));
       setSelectedLogIds(new Set());
@@ -161,15 +169,24 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const q = query(collection(db, 'workLogs'), where('orderId', '==', order.id));
-        const snapshot = await getDocs(q);
+        if (clientOrders.length === 0) {
+           setLogs([]);
+           setLoading(false);
+           return;
+        }
         
-        const fetchedLogs = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as WorkLog[];
-
-        setLogs(fetchedLogs);
+        const allLogs: WorkLog[] = [];
+        
+        for (let i = 0; i < clientOrders.length; i += 10) {
+           const chunk = clientOrders.slice(i, i + 10).map(o => o.id);
+           const q = query(collection(db, 'workLogs'), where('orderId', 'in', chunk));
+           const snap = await getDocs(q);
+           snap.forEach(doc => {
+             allLogs.push({ ...doc.data(), id: doc.id } as WorkLog);
+           });
+        }
+        
+        setLogs(allLogs);
       } catch (error) {
         console.error("Błąd podczas pobierania meldunków:", error);
       } finally {
@@ -178,7 +195,7 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
     };
 
     fetchLogs();
-  }, [order.id, editingLog]); // Odśwież po zamknięciu edycji
+  }, [erpOrderNumber, clientOrders, editingLog]); // Odśwież po zamknięciu edycji
 
   const handleSort = (field: keyof WorkLog) => {
     if (sortField === field) {
@@ -225,9 +242,13 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
     const elemMap = new Map<string, ElementAcc>();
 
     completedLogs.forEach(log => {
+      // Grupujemy po kombinacji orderId + elementId aby waga była z konkretnego zlecenia
+      const oId = log.orderId || 'unknown_order';
       const eId = log.elementId || 'whole_order';
-      if (!elemMap.has(eId)) elemMap.set(eId, { logs: [], workerMap: new Map() });
-      const elemAcc = elemMap.get(eId)!;
+      const key = `${oId}_${eId}`;
+
+      if (!elemMap.has(key)) elemMap.set(key, { logs: [], workerMap: new Map() });
+      const elemAcc = elemMap.get(key)!;
       elemAcc.logs.push(log);
 
       const uid = log.userId;
@@ -241,16 +262,32 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
 
     const elements: ElementStat[] = [];
 
-    elemMap.forEach((elemAcc, eId) => {
-      const element = order.elements?.find(e => e.id === eId);
-      const baseWeight = eId === 'whole_order'
-        ? (order.totalWeight || 0)
-        : (element?.weight || 0);
+    elemMap.forEach((elemAcc, key) => {
+      const [oId, eId] = key.split('_');
+      let element: any = undefined;
+      let baseWeight = 0;
+      let orderName = 'Zlecenie';
+      
+      const order = clientOrders.find(o => o.id === oId);
+      if (order) {
+        orderName = order.orderNumber;
+        if (eId === 'whole_order') {
+           // Waga całej sztuki (suma elementów lub totalWeight)
+           baseWeight = (order.elements && order.elements.length > 0) 
+             ? order.elements.reduce((s, el) => s + (el.weight || 0), 0)
+             : (order.totalWeight || 0);
+        } else {
+           element = order.elements?.find(e => e.id === eId);
+           if (element) {
+              baseWeight = element.weight || 0;
+           }
+        }
+      }
 
       const totalSec = Array.from(elemAcc.workerMap.values()).reduce((s, w) => s + w.totalSeconds, 0);
       const totalQty = Array.from(elemAcc.workerMap.values()).reduce((s, w) => s + w.totalQuantity, 0);
       
-      const isWholeOrder = eId === 'whole_order';
+      // Mnożymy wagę bazową (1 sztuki/elementu) przez zaraportowaną ilość
       const weight = baseWeight * totalQty;
 
       const laborCost = (totalSec / 3600) * HOURLY_RATE;
@@ -263,18 +300,18 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
       let namePart = '';
       if (rawName && rawName.trim().toLowerCase() !== 'element') {
         namePart = rawName;
-      } else if (order.productName) {
+      } else if (order?.productName) {
         namePart = order.productName;
       } else {
-        namePart = 'Element';
+        namePart = 'Wyrób';
       }
 
       const elementName = eId === 'whole_order'
-        ? (order.productName ? `Praca ogólna - ${order.productName}` : 'Praca ogólna na zleceniu')
-        : namePart;
+        ? (order?.productName ? `${order.productName} (${orderName})` : `Praca ogólna (${orderName})`)
+        : `${namePart} (${orderName})`;
 
       elements.push({
-        elementId: eId,
+        elementId: key, // unikany klucz
         elementName,
         weight,
         isWholeOrder: eId === 'whole_order',
@@ -305,16 +342,31 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
   const hallStats = useMemo(() => {
     const hallLogs = logs.filter(l => !l.manual);
     return getStatsForLogs(hallLogs);
-  }, [logs, order]);
+  }, [logs, clientOrders]);
 
   const manualStats = useMemo(() => {
     const manualLogs = logs.filter(l => !!l.manual);
     return getStatsForLogs(manualLogs);
-  }, [logs, order]);
+  }, [logs, clientOrders]);
 
-  const totalOrderWeight = useMemo(() => {
-    return order.totalWeight || order.elements?.reduce((sum, el) => sum + (el.weight || 0), 0) || 0;
-  }, [order]);
+  const { totalPlannedWeight, totalActualWeight } = useMemo(() => {
+    let planned = 0;
+    let actual = 0;
+    clientOrders.forEach(o => {
+      // 1. Waga 1 sztuki całego wyrobu (suma elementów lub waga wpisana ręcznie)
+      const unitWeight = (o.elements && o.elements.length > 0) 
+        ? o.elements.reduce((sum, el) => sum + (el.weight || 0), 0) 
+        : (o.totalWeight || 0);
+      
+      // 2. Waga planowana (waga sztuki * ilość zaplanowana)
+      planned += unitWeight * (o.targetQuantity || 1);
+      
+      // 3. Waga rzeczywista (waga sztuki * ilość zaraportowana na hali)
+      const reportedQty = o.appReportedQuantity ?? o.reportedQuantity ?? 0;
+      actual += unitWeight * reportedQty;
+    });
+    return { totalPlannedWeight: planned, totalActualWeight: actual };
+  }, [clientOrders]);
 
   const SortIndicator = ({ field }: { field: keyof WorkLog }) => {
     if (sortField !== field) return null;
@@ -322,18 +374,20 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
   };
 
   // --- MATEMATYKA: Wkład procentowy w zlecenie/element ---
+  
   const calculateContribution = (log: WorkLog) => {
     const qty = log.quantityReported || 0;
     if (qty === 0) return { pct: 0, targetLabel: 'Zlecenia', weightedIncrement: 0 };
 
-    let target = order.targetQuantity || 1;
+    const logOrder = clientOrders.find(o => o.id === log.orderId);
+    let target = logOrder?.targetQuantity || 1;
     let targetLabel = 'Zlecenia';
     let weightedIncrement = qty;
 
-    if (log.elementId && order.elements && order.elements.length > 0) {
-      const element = order.elements.find(e => e.id === log.elementId);
+    if (log.elementId && logOrder?.elements && logOrder.elements.length > 0) {
+      const element = logOrder.elements.find(e => e.id === log.elementId);
       if (element) {
-        const totalWeightPerUnit = order.elements.reduce((sum, el) => sum + (el.weight || 0), 0);
+        const totalWeightPerUnit = logOrder.elements.reduce((sum, el) => sum + (el.weight || 0), 0);
         if (totalWeightPerUnit > 0) {
           weightedIncrement = qty * (element.weight / totalWeightPerUnit);
         }
@@ -354,10 +408,7 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
     const isHall = statsType === 'hall';
     const badgeColor = isHall ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200';
 
-  
-
-  return (
-
+    return (
       <div className="space-y-4 bg-white p-5 rounded-3xl border border-stone-200 shadow-sm flex flex-col">
         <div className="flex items-center gap-3 pb-3 border-b border-stone-150">
           <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center border shrink-0", badgeColor)}>
@@ -530,58 +581,6 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
     );
   };
 
-  const handleRecalculate = () => {
-    setConfirmRecalculateDialog(true);
-  };
-
-  const executeRecalculate = async () => {
-    setIsRecalculating(true);
-    try {
-      let totalAppQty = 0;
-      let elementsState = order.elements ? [...order.elements].map(e => ({...e, reportedQuantity: 0})) : [];
-
-      logs.filter(l => l.quantityReported && l.quantityReported > 0).forEach(log => {
-        let weightedDelta = log.quantityReported || 0;
-        
-        if (log.elementId && elementsState.length > 0) {
-          const targetElement = elementsState.find((el: any) => el.id === log.elementId);
-          if (targetElement) {
-            const totalWeight = elementsState.reduce((sum: number, el: any) => sum + (el.weight || 0), 0);
-            if (totalWeight > 0) {
-              weightedDelta = (log.quantityReported || 0) * ((targetElement.weight || 0) / totalWeight);
-            }
-            targetElement.reportedQuantity = (targetElement.reportedQuantity || 0) + (log.quantityReported || 0);
-          }
-        }
-        totalAppQty += weightedDelta;
-      });
-
-      const newAppTotal = Number(totalAppQty.toFixed(3));
-      const newStatus = calculateOrderStatus(
-        order.erpReportedQuantity || order.reportedQuantity || 0,
-        newAppTotal,
-        order.targetQuantity || 1,
-        false,
-        elementsState.length > 0 ? elementsState : undefined
-      );
-
-      const updateData: any = {
-        appReportedQuantity: newAppTotal,
-        status: newStatus
-      };
-      if (elementsState.length > 0) {
-        updateData.elements = elementsState;
-      }
-
-      await updateDoc(doc(db, 'orders', order.id), updateData);
-      setConfirmRecalculateDialog(false);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsRecalculating(false);
-    }
-  };
-
   return (
     // Zamiast małego modala, tworzymy widok pełnoekranowy (fixed inset-0)
     <div className="fixed inset-0 z-[100] bg-stone-50 overflow-y-auto flex flex-col">
@@ -595,23 +594,21 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
           <div>
             <h2 className="text-xl font-black text-stone-900 flex items-center gap-2">
               <Clock className="text-emerald-600" size={24} />
-              Analiza Meldunków: {order.orderNumber}
+              Analiza Meldunków (Zlecenie Klienta): {erpOrderNumber}
             </h2>
-            <p className="text-xs text-stone-500 mt-0.5 font-medium">{order.productName}</p>
+            <div className="flex items-center gap-4 mt-1">
+              <p className="text-xs text-stone-500 font-medium">Ilość zleceń: {clientOrders.length}</p>
+              <div className="w-1 h-1 rounded-full bg-stone-300" />
+              <p className="text-xs text-stone-500 font-medium flex items-center gap-1">
+                Waga Planowana: <span className="font-bold text-stone-700">{totalPlannedWeight.toLocaleString('pl-PL', { maximumFractionDigits: 2 })} kg</span>
+              </p>
+              <div className="w-1 h-1 rounded-full bg-stone-300" />
+              <p className="text-xs text-stone-500 font-medium flex items-center gap-1">
+                Waga Rzeczywista (Hala): <span className="font-bold text-emerald-600">{totalActualWeight.toLocaleString('pl-PL', { maximumFractionDigits: 2 })} kg</span>
+              </p>
+            </div>
           </div>
         </div>
-          {order.erpOrderNumber && onShowClientLogs && (
-            <button
-              onClick={() => {
-                onClose();
-                onShowClientLogs(order.erpOrderNumber!);
-              }}
-              className="px-4 py-2 bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 rounded-xl font-bold text-xs transition-all flex items-center gap-2 shadow-sm"
-            >
-              <Layers size={16} /> Podsumowanie Zlecenia Klienta ({order.erpOrderNumber})
-            </button>
-          )}
-
       </div>
 
       <div className="max-w-7xl mx-auto w-full p-6 flex-1">
@@ -627,18 +624,61 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
           </div>
         ) : (
           <div className="space-y-6">
+            {/* GŁÓWNE KARTY TONAZU DLA ZLECENIA KLIENTA */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 bg-white p-5 rounded-3xl border border-stone-200 shadow-sm">
+              <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200/80 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center shrink-0">
+                  <Scale size={20} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-stone-400">Waga Planowana (Całość)</p>
+                  <p className="text-lg font-black text-stone-900 font-mono tracking-tight">
+                    {totalPlannedWeight.toLocaleString('pl-PL', { maximumFractionDigits: 2 })} <span className="text-xs font-bold text-stone-500">kg</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200/80 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center shrink-0">
+                  <TrendingUp size={20} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-stone-400">Waga Rzeczywista (Hala)</p>
+                  <p className="text-lg font-black text-emerald-700 font-mono tracking-tight">
+                    {totalActualWeight.toLocaleString('pl-PL', { maximumFractionDigits: 2 })} <span className="text-xs font-bold text-emerald-600">kg</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200/80 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center shrink-0">
+                  <BarChart2 size={20} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-stone-400">Realizacja Tonażu</p>
+                  <p className="text-lg font-black text-amber-700 font-mono tracking-tight">
+                    {totalPlannedWeight > 0 ? ((totalActualWeight / totalPlannedWeight) * 100).toFixed(1) : '0.0'} <span className="text-xs font-bold text-amber-600">%</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200/80 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center shrink-0">
+                  <Package size={20} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-stone-400">Zlecenia Produkcyjne</p>
+                  <p className="text-lg font-black text-blue-900 font-mono tracking-tight">
+                    {clientOrders.length} <span className="text-xs font-bold text-blue-600">ZP</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* PRZEŁĄCZNIK ŹRÓDŁA MELDUNKÓW */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-4 rounded-2xl border border-stone-200 shadow-sm gap-3">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-stone-700">Filtruj typ meldunków w tabeli:</span>
-                <button
-                  type="button"
-                  onClick={handleRecalculate}
-                  title="Przelicz ilość z Hali na podstawie widocznych meldunków"
-                  className="ml-4 flex items-center gap-2 px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 rounded-lg text-xs font-bold transition-all shadow-sm"
-                >
-                  <RefreshCw size={14} /> Przelicz APP
-                </button>
               </div>
               <div className="flex bg-stone-100 p-1 rounded-xl h-[40px] items-center w-full sm:w-auto">
                 <button
@@ -836,36 +876,6 @@ export function OrderLogsView({ order, orders, employees, onClose, onShowClientL
             <AnimatePresence>
         {editingLog && <EditLogModal log={editingLog} orders={orders} onClose={() => setEditingLog(null)} />}
       </AnimatePresence>
-
-            {confirmRecalculateDialog && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="p-6">
-              <h3 className="text-xl font-bold text-stone-900 mb-2">Przelicz ilość APP</h3>
-              <p className="text-stone-600 text-sm">
-                Czy na pewno chcesz przeliczyć wkład i status zlecenia na podstawie historii meldunków? Użyj tego, jeśli suma meldunków z Hali nie zgadza się ze statusem ZP.
-              </p>
-            </div>
-            <div className="bg-stone-50 p-4 border-t border-stone-100 flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmRecalculateDialog(false)}
-                className="px-4 py-2 font-bold text-stone-600 bg-white border border-stone-200 hover:bg-stone-50 rounded-xl transition-colors text-sm"
-                disabled={isRecalculating}
-              >
-                Anuluj
-              </button>
-              <button
-                onClick={executeRecalculate}
-                className="px-4 py-2 font-bold text-white bg-amber-600 hover:bg-amber-500 rounded-xl transition-colors shadow-sm flex items-center gap-2 text-sm"
-                disabled={isRecalculating}
-              >
-                {isRecalculating ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <RefreshCw size={16} />}
-                Przelicz Zlecenie
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {confirmMultiDeleteDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">

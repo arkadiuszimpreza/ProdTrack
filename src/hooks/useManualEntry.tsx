@@ -2,7 +2,7 @@ import { collection, doc, writeBatch, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Employee, ProductionOrder } from '../types';
 import { handleFirestoreError, OperationType } from '../utils/firestore-helpers';
-import { calculateOrderStatus } from '../utils/orderStatus';
+import { calculateOrderStatus, applyLogImpactToOrder } from '../utils/orderStatus';
 
 export interface ManualEntryPayload {
   id: string;
@@ -10,7 +10,7 @@ export interface ManualEntryPayload {
   orderId: string | null;
   order?: ProductionOrder | null;
   startTime: Date;
-  endTime: Date;
+  endTime: Date | null;
   quantity: number;
   assortmentCategory?: string;
   elementId?: string;
@@ -60,7 +60,7 @@ export function useManualEntry(employees: Employee[], orders: ProductionOrder[])
           orderId: entry.orderId || order?.id || null,
           orderNumber: order?.orderNumber || (entry.orderId ? 'Archiwalne Zlecenie' : 'Praca ogólna'),
           startTime: Timestamp.fromDate(start),
-          endTime: Timestamp.fromDate(end),
+          endTime: end ? Timestamp.fromDate(end) : null,
           duration: duration,
           quantityReported: entry.quantity || 0,
           assortmentCategory: finalCategory, // To sprawi, że kategoria wyświetli się w "Historii"

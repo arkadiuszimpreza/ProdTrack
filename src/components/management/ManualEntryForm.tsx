@@ -22,7 +22,7 @@ export function ManualEntryForm({
     hours: number, 
     quantity: number, 
     startTime: Date, 
-    endTime: Date, 
+    endTime: Date | null, 
     assortmentCategory: string,
     order?: ProductionOrder | null
   }) => Promise<void> 
@@ -35,6 +35,7 @@ export function ManualEntryForm({
   const [endTime, setEndTime] = useState<string>('15:00');
   const [quantity, setQuantity] = useState<string>('');
   const [date, setDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [isInProgress, setIsInProgress] = useState(false);
   const [assortmentCategory, setAssortmentCategory] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -83,12 +84,23 @@ export function ManualEntryForm({
   }, [orderId, selectedOrder]);
 
   const calculateHoursFromRange = () => {
-    if (!startTime || !endTime) return 0;
+    if (!startTime) return 0;
     const [startH, startM] = startTime.split(':').map(Number);
-    const [endH, endM] = endTime.split(':').map(Number);
+    let endH, endM;
+
+    if (isInProgress) {
+        const now = new Date();
+        endH = now.getHours();
+        endM = now.getMinutes();
+    } else {
+        if (!endTime) return 0;
+        const parts = endTime.split(':').map(Number);
+        endH = parts[0];
+        endM = parts[1];
+    }
     
     let diffMinutes = (endH * 60 + endM) - (startH * 60 + startM);
-    if (diffMinutes < 0) diffMinutes += 24 * 60; // Handle overnight if needed, though usually not for manual entry
+    if (diffMinutes < 0) diffMinutes += 24 * 60; // Handle overnight
     
     return diffMinutes / 60;
   };
@@ -98,7 +110,7 @@ export function ManualEntryForm({
     
     let finalHours = 0;
     let finalStartTime: Date;
-    let finalEndTime: Date;
+    let finalEndTime: Date | null = null;
 
     const [year, month, day] = date.split('-').map(Number);
 
@@ -112,17 +124,19 @@ export function ManualEntryForm({
       finalEndTime = new Date(finalStartTime.getTime() + finalHours * 3600 * 1000);
     } else {
       finalHours = calculateHoursFromRange();
-      if (finalHours <= 0) return;
+      if (finalHours <= 0 && !isInProgress) return;
 
       const [startH, startM] = startTime.split(':').map(Number);
-      const [endH, endM] = endTime.split(':').map(Number);
-      
-      // Tworzymy daty startu i końca w czasie lokalnym
       finalStartTime = new Date(year, month - 1, day, startH, startM, 0);
-      finalEndTime = new Date(year, month - 1, day, endH, endM, 0);
       
-      if (finalEndTime < finalStartTime) {
-        finalEndTime.setDate(finalEndTime.getDate() + 1);
+      if (isInProgress) {
+         finalEndTime = null;
+      } else {
+         const [endH, endM] = endTime.split(':').map(Number);
+         finalEndTime = new Date(year, month - 1, day, endH, endM, 0);
+         if (finalEndTime < finalStartTime) {
+           finalEndTime.setDate(finalEndTime.getDate() + 1);
+         }
       }
     }
 
@@ -269,16 +283,28 @@ export function ManualEntryForm({
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-black uppercase tracking-wider text-stone-400 ml-1">
-                      Do godziny
-                    </label>
-                    <input 
-                      type="time" 
-                      value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
-                      className="w-full p-4 bg-stone-50 border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                      required={entryMode === 'range'}
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-black uppercase tracking-wider text-stone-400 ml-1">
+                        Do godziny
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer mr-2 mt-1">
+                        <input type="checkbox" checked={isInProgress} onChange={(e) => setIsInProgress(e.target.checked)} className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-emerald-300" />
+                        <span className="text-xs font-bold text-emerald-700">W toku</span>
+                      </label>
+                    </div>
+                    {!isInProgress ? (
+                      <input 
+                        type="time" 
+                        value={endTime}
+                        onChange={(e) => setEndTime(e.target.value)}
+                        className="w-full p-4 bg-stone-50 border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                        required={entryMode === 'range' && !isInProgress}
+                      />
+                    ) : (
+                      <div className="w-full p-4 bg-emerald-50 border border-emerald-200 border-dashed rounded-2xl text-emerald-600 font-bold flex items-center justify-center">
+                        Teraz...
+                      </div>
+                    )}
                   </div>
                   <div className="col-span-2 text-right">
                     <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">

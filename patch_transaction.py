@@ -1,150 +1,20 @@
-import { collection, doc, updateDoc, setDoc, writeBatch, serverTimestamp, Timestamp, query, where, getDocs, arrayUnion, arrayRemove, runTransaction } from 'firebase/firestore';
-import { differenceInSeconds } from 'date-fns';
-import { db } from '../firebase';
-import { ProductionOrder, WorkLog, WorkSession, WorkStation, Employee, OrderElement } from '../types';
-import { handleFirestoreError, OperationType } from '../utils/firestore-helpers';
-import { User as FirebaseUser } from 'firebase/auth';
-import { calculateOrderStatus, applyLogImpactToOrder } from '../utils/orderStatus';
+import re
 
-interface UseWorkManagerProps {
-  user: FirebaseUser | null;
-  currentOperator: Employee | null;
-  activeLog: WorkLog | null;
-  setActiveLog: (log: WorkLog | null) => void;
-  activeSessions: WorkSession[];
-  orders: ProductionOrder[];
-}
+with open('src/hooks/useWorkManager.ts', 'r', encoding='utf-8') as f:
+    content = f.read()
 
-export function useWorkManager({ 
-  user, 
-  currentOperator, 
-  activeLog, 
-  setActiveLog, 
-  activeSessions, 
-  orders 
-}: UseWorkManagerProps) {
+# Fix imports
+content = content.replace(
+    "import { calculateOrderStatus } from '../utils/orderStatus';",
+    "import { calculateOrderStatus, applyLogImpactToOrder } from '../utils/orderStatus';"
+)
 
-  // --- TWARDA BLOKADA: Czy pracownik może zacząć nową pracę? ---
-  const canStartNewWork = () => {
-    if (activeLog) {
-      alert("Niedozwolona operacja: Najpierw zakończ obecne zadanie!");
-      return false;
-    }
-    return true;
-  };
+content = content.replace(
+    "arrayUnion, arrayRemove } from 'firebase/firestore';",
+    "arrayUnion, arrayRemove, runTransaction } from 'firebase/firestore';"
+)
 
-  const getIdentifier = () => currentOperator?.id || user?.uid;
-  const getName = () => currentOperator?.displayName || user?.displayName || 'Pracownik';
-
-  // 1. Praca Indywidualna
-  const startWork = async (order: ProductionOrder, element?: OrderElement) => {
-    if (!canStartNewWork()) return;
-
-    try {
-      const batch = writeBatch(db);
-      const newLogRef = doc(collection(db, 'workLogs'));
-      
-      batch.set(newLogRef, {
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        userId: getIdentifier(),
-        userName: getName(),
-        startTime: serverTimestamp(),
-        endTime: null,
-        duration: 0,
-        quantityReported: 0,
-        elementId: element?.id || null,
-        elementName: element?.name || null,
-        assortmentCategory: order.assortmentCategory || null
-      });
-
-      batch.update(doc(db, 'orders', order.id), { status: 'in-progress' });
-      await batch.commit();
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'workLogs');
-    }
-  };
-
-  // 2. Rozpoczęcie Pracy Zespołowej (Lider)
-  const startTeamWork = async (station: WorkStation) => {
-    if (!canStartNewWork()) return;
-    if (!currentOperator) return;
-
-    try {
-      const batch = writeBatch(db);
-      const sessionRef = doc(collection(db, 'workSessions'));
-      const logRef = doc(collection(db, 'workLogs'));
-
-      // Tworzymy Sesję
-      batch.set(sessionRef, {
-        id: sessionRef.id,
-        stationId: station.id,
-        stationName: station.name,
-        leaderId: currentOperator.id,
-        leaderName: currentOperator.displayName,
-        startTime: serverTimestamp(),
-        status: 'active',
-        memberIds: [currentOperator.id]
-      });
-
-      // Tworzymy Log dla Lidera (Jedna transakcja z Sesją!)
-      batch.set(logRef, {
-        userId: currentOperator.id,
-        userName: currentOperator.displayName,
-        startTime: serverTimestamp(),
-        endTime: null,
-        duration: 0,
-        quantityReported: 0,
-        sessionId: sessionRef.id,
-        stationId: station.id,
-        stationName: station.name
-      });
-
-      await batch.commit();
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'workSessions');
-    }
-  };
-
-  // 3. Dołączenie do Zespołu
-  const joinTeam = async (session: WorkSession) => {
-    if (!canStartNewWork()) return;
-    if (!currentOperator) return;
-
-    // Sprawdzamy czy już w nim nie jest
-    if (session.memberIds.includes(currentOperator.id)) {
-      alert("Jesteś już w tym zespole!");
-      return;
-    }
-
-    try {
-      const batch = writeBatch(db);
-      
-      batch.update(doc(db, 'workSessions', session.id), {
-        memberIds: arrayUnion(currentOperator.id)
-      });
-
-      const logRef = doc(collection(db, 'workLogs'));
-      batch.set(logRef, {
-        userId: currentOperator.id,
-        userName: currentOperator.displayName,
-        startTime: serverTimestamp(),
-        endTime: null,
-        duration: 0,
-        quantityReported: 0,
-        sessionId: session.id,
-        stationId: session.stationId,
-        stationName: session.stationName
-      });
-
-      await batch.commit();
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, 'workSessions');
-    }
-  };
-
-  // 4. Zakończenie Pracy (Pojedynczej lub Zespołowej)
-  const stopWork = async (reports?: { orderId: string, elementId?: string, quantity: number }[]) => {
+new_stop_work = """  const stopWork = async (reports?: { orderId: string, elementId?: string, quantity: number }[]) => {
     if (!activeLog) return;
     try {
       const endTime = Timestamp.now();
@@ -295,12 +165,14 @@ export function useWorkManager({
       console.error(err);
       handleFirestoreError(err, OperationType.UPDATE, 'workLogs');
     }
-  };
+  };"""
 
-  return {
-    startWork,
-    startTeamWork,
-    joinTeam,
-    stopWork
-  };
-}
+content = re.sub(
+    r'  const stopWork = async \(reports\?: \{ orderId: string, elementId\?: string, quantity: number \}\[\]\) => \{.*?    \} catch \(err\) \{\s*handleFirestoreError\(err, OperationType.UPDATE, \'workLogs\'\);\s*\}\s*\};',
+    new_stop_work,
+    content,
+    flags=re.DOTALL
+)
+
+with open('src/hooks/useWorkManager.ts', 'w', encoding='utf-8') as f:
+    f.write(content)
