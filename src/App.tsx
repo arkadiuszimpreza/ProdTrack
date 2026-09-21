@@ -5,7 +5,7 @@ import {
 } from 'firebase/firestore';
 import { 
   signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, 
-  User as FirebaseUser 
+  User as FirebaseUser, signInWithEmailAndPassword
 } from 'firebase/auth';
 import { auth, db } from './firebase';
 import { motion } from 'motion/react';
@@ -210,7 +210,13 @@ export default function App() {
   );
 
   if (!user) return (
-    <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-stone-50 flex flex-col items-center justify-center p-4">
+      {isTvMode && (
+        <div className="mb-8 text-center animate-pulse">
+          <h2 className="text-2xl font-black text-emerald-700 uppercase tracking-widest">Wymagana Inicjalizacja Ekranu</h2>
+          <p className="text-stone-500 font-medium mt-2">Zaloguj urządzenie jednorazowo. Sesja zostanie zachowana w pamięci TV.</p>
+        </div>
+      )}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white p-8 rounded-[2.5rem] shadow-2xl max-w-sm w-full text-center border border-stone-100">
         <div className="w-20 h-20 bg-emerald-600 rounded-3xl flex items-center justify-center text-white mx-auto mb-6 shadow-lg shadow-emerald-200"><Package size={40} /></div>
         <h1 className="text-3xl font-black text-stone-900 mb-2 tracking-tight">ProdSSS Erplast</h1>

@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, Timestamp, orderBy, documentId } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp, orderBy, documentId, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { WorkLog, Employee, ProductionOrder } from '../../types';
-import { Calendar, ChevronLeft, ChevronRight, Loader2, RefreshCw, History, Pencil, Plus } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Loader2, RefreshCw, History, Pencil, Plus, List } from 'lucide-react';
 import { format, startOfDay, endOfDay, addDays, subDays } from 'date-fns';
 import { pl } from 'date-fns/locale';
 import { EditLogModal, AddLogModal } from '../production/OrderLogsView';
+import { OrderElementEditor } from '../production/OrderElementEditor';
+import { calculateOrderStatus } from '../../utils/orderStatus';
 
 export const EmployeeTimelineView: React.FC<{ 
   orders?: ProductionOrder[];
   onViewOrderLogs?: (order: ProductionOrder) => void;
-}> = ({ orders = [], onViewOrderLogs }) => {
+  onEditElements?: (order: ProductionOrder) => void;
+}> = ({ orders = [], onViewOrderLogs, onEditElements }) => {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [logs, setLogs] = useState<WorkLog[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -19,6 +22,7 @@ export const EmployeeTimelineView: React.FC<{
   const [logSource, setLogSource] = useState<'all' | 'hall' | 'manual'>('hall');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [editingLog, setEditingLog] = useState<WorkLog | null>(null);
+  const [editingOrderElements, setEditingOrderElements] = useState<ProductionOrder | null>(null);
   const [isAddingGlobalLog, setIsAddingGlobalLog] = useState(false);
   const [addingLogForEmployee, setAddingLogForEmployee] = useState<Employee | null>(null);
 
@@ -308,7 +312,7 @@ export const EmployeeTimelineView: React.FC<{
                                 minHeight: '48px',
                                 width: isExpanded ? 'fit-content' : style.width,
                                 minWidth: isExpanded ? style.width : '0',
-                                maxWidth: isExpanded ? `max(400px, ${style.width})` : 'none',
+                                maxWidth: isExpanded ? `max(460px, ${style.width})` : 'none',
                                 zIndex: isExpanded ? 50 : (!isFinished ? 20 : 10),
                               }}
                               title={`Zlecenie: ${log.orderNumber || 'Brak'} \nElement: ${log.elementName || '-'} \nCzas: ${format((log.startTime as any).toDate(), 'HH:mm')} - ${log.endTime ? format((log.endTime as any).toDate(), 'HH:mm') : 'teraz'}`}
@@ -324,28 +328,34 @@ export const EmployeeTimelineView: React.FC<{
                                     {clientName && (
                                       <div className="flex justify-between">
                                         <span>Kontrahent:</span>
-                                        <span className="font-semibold text-right">{clientName}</span>
+                                        <span className="font-semibold text-right text-slate-800">{clientName}</span>
                                       </div>
                                     )}
                                     {projectNumber && (
                                       <div className="flex justify-between">
                                         <span>Kontrakt:</span>
-                                        <span className="font-semibold text-right">{projectNumber}</span>
+                                        <span className="font-semibold text-right text-slate-800">{projectNumber}</span>
                                       </div>
                                     )}
                                     <div className="flex justify-between">
-                                      <span>Zlecenie:</span>
-                                      <span className="font-semibold text-right">{log.orderNumber || 'Brak'}</span>
+                                      <span>Zlecenie produkcyjne:</span>
+                                      <span className="font-semibold text-right text-slate-800">{log.orderNumber || order?.orderNumber || 'Brak'}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span>Zlecenie klienta:</span>
+                                      <span className="font-semibold text-right text-indigo-700 font-mono">
+                                        {order?.erpOrderNumber || (log as any).erpOrderNumber || '-'}
+                                      </span>
                                     </div>
                                     <div className="flex justify-between">
                                       <span>Rozpoczęcie:</span>
-                                      <span className="font-semibold text-right">{format((log.startTime as any).toDate(), 'HH:mm')}</span>
+                                      <span className="font-semibold text-right text-slate-800">{format((log.startTime as any).toDate(), 'HH:mm')}</span>
                                     </div>
                                     <div className="flex justify-between">
                                       <span>Zakończenie:</span>
-                                      <span className="font-semibold text-right">{log.endTime ? format((log.endTime as any).toDate(), 'HH:mm') : 'W trakcie'}</span>
+                                      <span className="font-semibold text-right text-slate-800">{log.endTime ? format((log.endTime as any).toDate(), 'HH:mm') : 'W trakcie'}</span>
                                     </div>
-                                                                        <div className="flex gap-2 mt-2">
+                                    <div className="flex flex-wrap gap-1.5 mt-2">
                                       {order && onViewOrderLogs && (
                                         <button
                                           onClick={(e) => {
@@ -353,10 +363,29 @@ export const EmployeeTimelineView: React.FC<{
                                             setExpandedLogId(null);
                                             onViewOrderLogs(order);
                                           }}
-                                          className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                                          className="flex-1 min-w-[110px] py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                                          title="Historia meldunków zlecenia produkcyjnego"
                                         >
                                           <History size={12} />
                                           Historia zlecenia
+                                        </button>
+                                      )}
+                                      {order && (
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setExpandedLogId(null);
+                                            if (onEditElements) {
+                                              onEditElements(order);
+                                            } else {
+                                              setEditingOrderElements(order);
+                                            }
+                                          }}
+                                          className="flex-1 min-w-[110px] py-1.5 px-2 bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-700 rounded text-xs font-semibold flex items-center justify-center gap-1 transition-colors whitespace-nowrap"
+                                          title="Zarządzaj elementami zlecenia produkcyjnego"
+                                        >
+                                          <List size={12} />
+                                          Zarządzaj elementami
                                         </button>
                                       )}
                                       <button
@@ -365,7 +394,8 @@ export const EmployeeTimelineView: React.FC<{
                                           setExpandedLogId(null);
                                           setEditingLog(log);
                                         }}
-                                        className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-emerald-100 text-slate-700 hover:text-emerald-700 rounded text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                                        className="flex-1 min-w-[110px] py-1.5 px-2 bg-slate-100 hover:bg-emerald-100 text-slate-700 hover:text-emerald-700 rounded text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                                        title="Edytuj meldunek pracownika"
                                       >
                                         <Pencil size={12} />
                                         Edytuj meldunek
@@ -394,6 +424,36 @@ export const EmployeeTimelineView: React.FC<{
         )}
       </div>
       
+      {editingOrderElements && (
+        <OrderElementEditor 
+          order={editingOrderElements} 
+          onClose={() => setEditingOrderElements(null)} 
+          onUpdate={async (id, elements, totalWeight, appReportedQty) => {
+            try {
+              const updateData: any = { elements, totalWeight };
+              if (appReportedQty !== undefined) {
+                updateData.appReportedQuantity = Number(appReportedQty.toFixed(3));
+                const targetOrder = orders.find(o => o.id === id) || historicalOrders.find(o => o.id === id) || editingOrderElements;
+                if (targetOrder) {
+                  const currentErpQty = targetOrder.erpReportedQuantity || targetOrder.reportedQuantity || 0;
+                  updateData.status = calculateOrderStatus(
+                    currentErpQty, 
+                    updateData.appReportedQuantity, 
+                    targetOrder.targetQuantity || 1,
+                    false,
+                    elements
+                  );
+                }
+              }
+              await updateDoc(doc(db, 'orders', id), updateData);
+              setHistoricalOrders(prev => prev.map(o => o.id === id ? { ...o, ...updateData } : o));
+            } catch (error) {
+              console.error("Błąd aktualizacji elementów:", error);
+            }
+          }} 
+        />
+      )}
+
       {editingLog && (
         <EditLogModal 
           log={editingLog} 

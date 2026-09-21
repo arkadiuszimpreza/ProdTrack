@@ -118,6 +118,7 @@ export const parseZakupyInfo = async (file: File): Promise<PurchaseOrderItem[]> 
           const articleName = String(getVal(row, ['Nazwa_1', 'Artykuł']) || '').trim();
           
           const projectNumber = String(getVal(row, ['Projekt-nr', 'Projekt', 'ZP-nr', 'ZP']) || '').trim();
+          const erpStatus = String(getVal(row, ['Status', 'Status pozycji', 'Status ERP', 'Status zlecenia']) || '').trim();
 
           const item: PurchaseOrderItem = {
             id: `PO-${procesNr.replace(/[\/]/g, '_')}-${pozNr.replace(/[\/]/g, '_')}`,
@@ -144,6 +145,7 @@ export const parseZakupyInfo = async (file: File): Promise<PurchaseOrderItem[]> 
             expectedDeliveryDate: parseExcelDate(getVal(row, ['Data dostawy'])),
             
             status: status,
+            erpStatus: erpStatus,
             rozliczone: billedQty,
             importedAt: new Date(),
           };

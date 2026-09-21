@@ -70,6 +70,15 @@ service cloud.firestore {
              request.auth.token.email_verified == true;
     }
 
+    function isNotReadOnly() {
+      let role = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      return role != 'tv-monitor' && role != 'podglad';
+    }
+
+    function canWrite() {
+      return isAuthenticated() && isNotReadOnly();
+    }
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
@@ -126,31 +135,38 @@ service cloud.firestore {
     // Rules
 
     match /expectedDeliveries/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     match /inventoryBatches/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     match /materialWithdrawals/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     match /materialReservations/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     match /inventoryCounts/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     match /inventoryAdjustments/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     match /inventoryArticles/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     // NOWA REGUŁA — rejestr transakcji magazynowych (WMS).
@@ -158,35 +174,40 @@ service cloud.firestore {
     // nigdzie nie jest edytowany ani usuwany po utworzeniu.
     match /inventoryTransactions/{document} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+      allow create: if canWrite();
       allow update, delete: if isAdmin();
     }
 
     match /techOperations/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     match /techProcesses/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     match /wmsReceiptsBackup/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     match /system_configs/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     match /systemSettings/{document} {
-      allow read, write: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     // NOWA REGUŁA — metadane systemowe (np. znacznik ostatniego importu zleceń).
     // Zapis wykonuje każdy użytkownik robiący import, nie tylko admin.
     match /system/{document} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow write: if canWrite();
     }
 
     // NOWA REGUŁA — dane obecności / OEE, importowane w panelu administracji.
@@ -221,14 +242,14 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidOrder(request.resource.data);
-      allow update: if isAuthenticated() && isValidOrder(request.resource.data);
+      allow update: if canWrite() && isValidOrder(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /workLogs/{logId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidWorkLog(request.resource.data);
-      allow update: if isAuthenticated();
+      allow create: if canWrite() && isValidWorkLog(request.resource.data);
+      allow update: if canWrite();
       allow delete: if isAdmin();
     }
 
@@ -249,8 +270,8 @@ service cloud.firestore {
 
     match /workSessions/{sessionId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidWorkSession(request.resource.data);
-      allow update: if isAuthenticated();
+      allow create: if canWrite() && isValidWorkSession(request.resource.data);
+      allow update: if canWrite();
       allow delete: if isAdmin();
     }
   }

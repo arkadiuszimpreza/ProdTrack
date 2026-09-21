@@ -21,6 +21,7 @@ const determineAssortmentCategory = (productName: string, articleNumber: string)
     name.includes('podpórka') || 
     name.includes('szyna') || 
     name.includes('balustrada') || 
+    name.includes('furtka') || 
     name.includes('gniazdo')) {
     return 'Bariery';
   }
@@ -119,6 +120,9 @@ export const parseOrdersExcel = (
           const clientName = String(row['Nazwa_1'] || row['Klient-nr'] || '').trim();
           const priority = String(row['Prio.'] || '').trim();
           const unit = String(row['JM'] || '').trim();
+          
+          const erpStatus = String(row['Status'] || '').trim();
+          const positionNumber = String(row['Poz.-nr'] || '').trim();
 
           const targetQuantity = Number(row['Ilość (plan.)'] || row['Ilość'] || 0);
           const erpQtyFromExcel = Number(row['Ilość (rzecz.)'] || 0);
@@ -137,6 +141,8 @@ export const parseOrdersExcel = (
             appReportedQuantity: 0,
             reportedQuantity: erpQtyFromExcel,
             status: initialStatus,
+            erpStatus: erpStatus || undefined,
+            positionNumber: positionNumber || undefined,
             articleNumber,
             projectNumber,
             priority,
@@ -164,6 +170,14 @@ export const parseOrdersExcel = (
             // Sprawdzanie różnicy w Zlecenie-nr
             if (erpOrderNumber && existing.erpOrderNumber !== erpOrderNumber) {
               diff.push({ field: 'erpOrderNumber', label: 'Nr Zlecenia ERP', oldValue: existing.erpOrderNumber, newValue: erpOrderNumber });
+            }
+            
+            // Sprawdzanie nowych pól
+            if (erpStatus && existing.erpStatus !== erpStatus) {
+              diff.push({ field: 'erpStatus', label: 'Status ERP', oldValue: existing.erpStatus || '', newValue: erpStatus });
+            }
+            if (positionNumber && existing.positionNumber !== positionNumber) {
+              diff.push({ field: 'positionNumber', label: 'Poz.-nr', oldValue: existing.positionNumber || '', newValue: positionNumber });
             }
 
             // Sprawdzanie różnicy w kategorii

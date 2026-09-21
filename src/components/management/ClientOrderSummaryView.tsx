@@ -238,16 +238,28 @@ export function ClientOrderSummaryView({ erpOrderNumber, orders, employees, onCl
     const completedLogs = targetLogs.filter(l => l.endTime != null && (l.duration || 0) > 0);
 
     type WorkerAcc = { userId: string; userName: string; totalSeconds: number; totalQuantity: number };
-    type ElementAcc = { logs: WorkLog[]; workerMap: Map<string, WorkerAcc> };
+    type ElementAcc = { 
+      orderId: string;
+      elementId: string;
+      logs: WorkLog[]; 
+      workerMap: Map<string, WorkerAcc> 
+    };
     const elemMap = new Map<string, ElementAcc>();
 
     completedLogs.forEach(log => {
       // Grupujemy po kombinacji orderId + elementId aby waga była z konkretnego zlecenia
       const oId = log.orderId || 'unknown_order';
       const eId = log.elementId || 'whole_order';
-      const key = `${oId}_${eId}`;
+      const key = `${oId}:::${eId}`;
 
-      if (!elemMap.has(key)) elemMap.set(key, { logs: [], workerMap: new Map() });
+      if (!elemMap.has(key)) {
+        elemMap.set(key, { 
+          orderId: oId,
+          elementId: eId,
+          logs: [], 
+          workerMap: new Map() 
+        });
+      }
       const elemAcc = elemMap.get(key)!;
       elemAcc.logs.push(log);
 
@@ -263,23 +275,28 @@ export function ClientOrderSummaryView({ erpOrderNumber, orders, employees, onCl
     const elements: ElementStat[] = [];
 
     elemMap.forEach((elemAcc, key) => {
-      const [oId, eId] = key.split('_');
+      const oId = elemAcc.orderId;
+      const eId = elemAcc.elementId;
       let element: any = undefined;
       let baseWeight = 0;
       let orderName = 'Zlecenie';
       
-      const order = clientOrders.find(o => o.id === oId);
+      const order = clientOrders.find(o => o.id === oId || o.orderNumber === oId);
       if (order) {
         orderName = order.orderNumber;
         if (eId === 'whole_order') {
-           // Waga całej sztuki (suma elementów lub totalWeight)
+           // Waga 1 sztuki wyrobu (suma elementów lub totalWeight wpisana w zlecenie)
            baseWeight = (order.elements && order.elements.length > 0) 
              ? order.elements.reduce((s, el) => s + (el.weight || 0), 0)
              : (order.totalWeight || 0);
         } else {
-           element = order.elements?.find(e => e.id === eId);
+           element = order.elements?.find(e => e.id === eId || (elemAcc.logs[0]?.elementName && e.name === elemAcc.logs[0]?.elementName));
            if (element) {
               baseWeight = element.weight || 0;
+           } else {
+              baseWeight = (order.elements && order.elements.length > 0)
+                ? order.elements.reduce((s, el) => s + (el.weight || 0), 0)
+                : (order.totalWeight || 0);
            }
         }
       }
@@ -287,8 +304,15 @@ export function ClientOrderSummaryView({ erpOrderNumber, orders, employees, onCl
       const totalSec = Array.from(elemAcc.workerMap.values()).reduce((s, w) => s + w.totalSeconds, 0);
       const totalQty = Array.from(elemAcc.workerMap.values()).reduce((s, w) => s + w.totalQuantity, 0);
       
-      // Mnożymy wagę bazową (1 sztuki/elementu) przez zaraportowaną ilość
-      const weight = baseWeight * totalQty;
+      // Ilość do wyliczenia wagi: priorytet to ilość zaraportowana w meldunkach hali,
+      // a w przypadku jej braku w meldunku sięgamy po ilość zaraportowaną na zleceniu lub docelową
+      const orderReportedQty = order ? (order.appReportedQuantity ?? order.reportedQuantity ?? 0) : 0;
+      const effectiveQty = totalQty > 0 
+        ? totalQty 
+        : (orderReportedQty > 0 ? orderReportedQty : (order?.targetQuantity || 1));
+
+      // Mnożymy wagę jednostkową (1 sztuki/elementu) przez efektywną zaraportowaną ilość
+      const weight = baseWeight * effectiveQty;
 
       const laborCost = (totalSec / 3600) * HOURLY_RATE;
       const costPerKg = weight > 0 ? laborCost / weight : null;
@@ -311,12 +335,12 @@ export function ClientOrderSummaryView({ erpOrderNumber, orders, employees, onCl
         : `${namePart} (${orderName})`;
 
       elements.push({
-        elementId: key, // unikany klucz
+        elementId: key, // unikalny klucz
         elementName,
         weight,
         isWholeOrder: eId === 'whole_order',
         totalSeconds: totalSec,
-        totalQuantity: totalQty,
+        totalQuantity: totalQty > 0 ? totalQty : (orderReportedQty > 0 ? orderReportedQty : 0),
         laborCost,
         costPerKg,
         workers,
@@ -432,7 +456,7 @@ export function ClientOrderSummaryView({ erpOrderNumber, orders, employees, onCl
                 { label: 'Godziny', value: `${formatHoursDecimal(stats.totalSeconds)} h`, icon: <Clock size={12} />, color: 'text-emerald-600', bg: 'bg-emerald-50' },
                 { label: 'Koszt rob.', value: `${stats.totalLaborCost.toFixed(0)} zł`, icon: <TrendingUp size={12} />, color: 'text-amber-600', bg: 'bg-amber-50' },
                 { label: 'Ilość', value: `${stats.totalQuantity} szt.`, icon: <Hash size={12} />, color: 'text-indigo-600', bg: 'bg-indigo-50' },
-                { label: 'Śr. Zł / Kg', value: stats.totalWorkedWeight > 0 ? `${(stats.totalLaborCost / stats.totalWorkedWeight).toFixed(2)}` : 'brak wagi', icon: <Scale size={12} />, color: 'text-rose-600', bg: 'bg-rose-50' },
+                { label: 'Śr. Zł / Kg', value: stats.totalWorkedWeight > 0 ? `${(stats.totalLaborCost / stats.totalWorkedWeight).toFixed(2)} zł` : 'brak wagi', icon: <Scale size={12} />, color: 'text-rose-600', bg: 'bg-rose-50' },
               ].map(kpi => (
                 <div key={kpi.label} className="bg-stone-50 rounded-xl border border-stone-200/60 p-2 flex items-center gap-2 min-w-0">
                   <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-xs', kpi.bg, kpi.color)}>
@@ -456,19 +480,29 @@ export function ClientOrderSummaryView({ erpOrderNumber, orders, employees, onCl
                   <div key={elem.elementId} className="border border-stone-200/80 rounded-xl overflow-hidden bg-stone-50/30">
                     {/* NAGŁÓWEK ELEMENTU */}
                     <div className="bg-stone-50/70 border-b border-stone-200/80 p-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
                         <div className="w-7 h-7 bg-white border border-stone-200 rounded-lg flex items-center justify-center text-indigo-500 shrink-0 shadow-sm">
                           <Package size={13} />
                         </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-stone-800 text-[11px] truncate max-w-[130px]" title={elem.elementName}>{elem.elementName}</p>
-                          {elem.weight > 0 && (
-                            <p className="text-[9px] text-stone-400 font-mono font-bold flex items-center gap-0.5 mt-0.5">
-                              <Scale size={9} />
-                              {elem.weight} kg
-                              {elem.isWholeOrder && ' (waga)'}
-                            </p>
-                          )}
+                        <div className="min-w-0 flex-1">
+                          <p className="font-bold text-stone-800 text-[11px] truncate" title={elem.elementName}>{elem.elementName}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {elem.weight > 0 ? (
+                              <p className="text-[9px] text-stone-500 font-mono font-bold flex items-center gap-0.5">
+                                <Scale size={9} className="text-stone-400" />
+                                {elem.weight.toLocaleString('pl-PL', { maximumFractionDigits: 2 })} kg
+                              </p>
+                            ) : (
+                              <p className="text-[9px] text-stone-400 font-mono italic">
+                                brak wagi
+                              </p>
+                            )}
+                            {elem.totalQuantity > 0 && (
+                              <span className="text-[9px] text-stone-400 font-mono">
+                                • {elem.totalQuantity} szt.
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -483,7 +517,7 @@ export function ClientOrderSummaryView({ erpOrderNumber, orders, employees, onCl
                         {/* zł/kg */}
                         {elem.costPerKg !== null ? (
                           <div className={cn(
-                            'border rounded-lg px-2 py-1 text-center min-w-[60px]',
+                            'border rounded-lg px-2 py-1 text-center min-w-[65px]',
                             getCostPerKgBg(elem.costPerKg)
                           )}>
                             <p className={cn('text-[8px] uppercase font-black', getCostPerKgColor(elem.costPerKg))}>ZŁ / KG</p>
@@ -492,7 +526,7 @@ export function ClientOrderSummaryView({ erpOrderNumber, orders, employees, onCl
                             </p>
                           </div>
                         ) : (
-                          <div className="bg-stone-100 border border-stone-200/60 rounded-lg px-2 py-1 text-center min-w-[60px]">
+                          <div className="bg-stone-100 border border-stone-200/60 rounded-lg px-2 py-1 text-center min-w-[65px]">
                             <p className="text-[8px] text-stone-400 uppercase font-black">ZŁ / KG</p>
                             <p className="font-mono font-bold text-stone-400 text-[9px]">brak</p>
                           </div>
@@ -812,10 +846,24 @@ export function ClientOrderSummaryView({ erpOrderNumber, orders, employees, onCl
                               </td>
                               <td className="p-4">
                                 <div className="flex flex-col gap-1">
+                                  {log.orderNumber ? (
+                                    <span className="text-[10px] font-bold text-stone-600 bg-stone-100 px-2 py-0.5 rounded border border-stone-200 inline-block w-max">
+                                      ZP: {log.orderNumber}
+                                    </span>
+                                  ) : (
+                                    (() => {
+                                      const matchingOrder = clientOrders.find(o => o.id === log.orderId);
+                                      return matchingOrder ? (
+                                        <span className="text-[10px] font-bold text-stone-600 bg-stone-100 px-2 py-0.5 rounded border border-stone-200 inline-block w-max">
+                                          ZP: {matchingOrder.orderNumber}
+                                        </span>
+                                      ) : null;
+                                    })()
+                                  )}
                                   {log.elementName ? (
                                     <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 inline-block w-max max-w-[200px] truncate">EL: {log.elementName}</span>
                                   ) : (
-                                    <span className="text-[10px] font-black text-stone-600 bg-stone-100 px-2 py-0.5 rounded border border-stone-200 inline-block w-max">CAŁE ZLECENIE</span>
+                                    <span className="text-[10px] font-medium text-stone-500 bg-stone-50 px-2 py-0.5 rounded border border-stone-150 inline-block w-max">Całe zlecenie</span>
                                   )}
                                 </div>
                               </td>

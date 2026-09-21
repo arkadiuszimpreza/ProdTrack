@@ -3,9 +3,10 @@ import { collection, query, onSnapshot, doc, getDocs, writeBatch, serverTimestam
 import { db } from '../../firebase';
 import { 
   Search, ArrowUpDown, Truck, ListFilter, CheckCircle, 
-  Upload, Calendar, User, FileSpreadsheet, CheckCircle2, AlertCircle 
+  Upload, Calendar, User, FileSpreadsheet, CheckCircle2, AlertCircle, Lock
 } from 'lucide-react';
 import { PurchaseOrderItem } from '../../types';
+import { calculateDeliveryStatus } from '../../utils/deliveryStatus';
 import { cn } from '../../utils/firestore-helpers';
 import { parseZakupyInfo } from '../../utils/inventoryExcelParser';
 
@@ -15,9 +16,10 @@ type FilterMode = 'pending_only' | 'all';
 interface ExpectedDeliveriesProps {
   onReceiveClick?: (item: any) => void;
   currentUser?: string;
+  isAdmin?: boolean;
 }
 
-export function ExpectedDeliveriesView({ onReceiveClick, currentUser }: ExpectedDeliveriesProps) {
+export function ExpectedDeliveriesView({ onReceiveClick, currentUser, isAdmin }: ExpectedDeliveriesProps) {
   const [deliveries, setDeliveries] = useState<PurchaseOrderItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -208,8 +210,8 @@ export function ExpectedDeliveriesView({ onReceiveClick, currentUser }: Expected
     // A. Filtr trybu: Tylko niepełne lub Wszystkie zamówienia
     if (filterMode === 'pending_only') {
       result = result.filter(item => {
-        const wmsDelivered = item.wmsDeliveredQuantity || 0;
-        return wmsDelivered < item.quantityOrdered;
+        const { mainStatus } = calculateDeliveryStatus(item);
+        return mainStatus !== 'dostarczone';
       });
     }
 
@@ -394,6 +396,12 @@ export function ExpectedDeliveriesView({ onReceiveClick, currentUser }: Expected
                 <th className="p-0 border-r border-stone-200 text-center">
                   <div className="flex items-center justify-center overflow-hidden resize-x w-28 min-w-[50px] px-2 py-1">Data dostawy</div>
                 </th>
+                <th className="p-0 border-r border-stone-200 text-center cursor-pointer hover:bg-stone-200 transition-colors" onClick={() => handleSort('erpStatus')}>
+                  <div className="flex items-center gap-1 justify-center overflow-hidden resize-x w-24 min-w-[50px] px-2 py-1">Status ERP <ArrowUpDown size={10} className="shrink-0"/></div>
+                </th>
+                <th className="p-0 border-r border-stone-200 text-center">
+                  <div className="flex items-center justify-center overflow-hidden w-24 min-w-[50px] px-2 py-1">Status WMS</div>
+                </th>
                 <th className="p-0 text-center">
                   <div className="flex items-center justify-center overflow-hidden w-20 min-w-[50px] px-2 py-1">Akcja</div>
                 </th>
@@ -402,15 +410,15 @@ export function ExpectedDeliveriesView({ onReceiveClick, currentUser }: Expected
           <tbody className="divide-y divide-stone-100 text-[11px] font-medium text-stone-800">
             {processedDeliveries.length === 0 ? (
               <tr>
-                <td colSpan={12} className="p-6 text-center text-stone-400 font-normal">
+                <td colSpan={14} className="p-6 text-center text-stone-400 font-normal">
                   <Truck size={24} className="mx-auto mb-1 opacity-20" />
                   Brak pozycji
                 </td>
               </tr>
             ) : (
               processedDeliveries.map(item => {
-                const wmsDelivered = item.wmsDeliveredQuantity || 0;
-                const isItemCompleted = wmsDelivered >= item.quantityOrdered;
+                const { mainStatus, subStatus } = calculateDeliveryStatus(item);
+                const isItemCompleted = mainStatus === 'dostarczone';
                 
                 return (
                   <tr 
@@ -442,15 +450,38 @@ export function ExpectedDeliveriesView({ onReceiveClick, currentUser }: Expected
                     <td className="px-2 py-1 border-r border-stone-200 text-center text-stone-500 font-semibold text-[11px] max-w-0 truncate">{item.unit}</td>
                     <td className="px-2 py-1 border-r border-stone-200 text-center text-stone-600 font-semibold max-w-0 truncate">{item.expectedDeliveryDate || '-'}</td>
                     
-                    <td className="px-2 py-1 text-center max-w-0 truncate">
-                      {onReceiveClick && !isItemCompleted && (
-                        <button 
-                          onClick={() => onReceiveClick(item)}
-                          className="px-3 py-1 bg-indigo-100 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-lg text-[10px] font-black uppercase transition-colors"
-                        >
-                          Przyjmij
-                        </button>
+                    <td className="px-2 py-1 border-r border-stone-200 text-center max-w-0 truncate" title={item.erpStatus || '-'}>
+                      {item.erpStatus ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-stone-100 text-stone-700 border border-stone-200">
+                          {item.erpStatus}
+                        </span>
+                      ) : (
+                        <span className="text-stone-300">-</span>
                       )}
+                    </td>
+
+                    <td className="px-2 py-1 border-r border-stone-200 text-center max-w-0 truncate" title={subStatus}>
+                      <span className={cn(
+                        "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider",
+                        mainStatus === 'oczekujące' && "bg-stone-200 text-stone-600",
+                        mainStatus === 'dost. częściowa' && "bg-amber-100 text-amber-700",
+                        mainStatus === 'dostarczone' && "bg-emerald-100 text-emerald-700"
+                      )}>
+                        {mainStatus}
+                      </span>
+                    </td>
+
+                    <td className="px-2 py-1 text-center max-w-0 truncate">
+                      <div className="flex items-center justify-center gap-1">
+                        {onReceiveClick && !isItemCompleted && (
+                          <button 
+                            onClick={() => onReceiveClick(item)}
+                            className="px-3 py-1 bg-indigo-100 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-lg text-[10px] font-black uppercase transition-colors"
+                          >
+                            Przyjmij
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

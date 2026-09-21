@@ -266,7 +266,14 @@ export function ReceiveDeliveryModal({ item, onClose, onSave }: Props) {
             </div>
             <div>
               <h2 className="text-xl font-black text-stone-900">Nowy Wsad z palca</h2>
-              <p className="text-sm font-medium text-stone-500">Zamówienie: {item.purchaseOrderNumber} • {item.articleName}</p>
+              <p className="text-sm font-medium text-stone-500 flex items-center gap-2 flex-wrap">
+                <span>Zamówienie: {item.purchaseOrderNumber} • {item.articleName}</span>
+                {item.erpStatus && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-stone-200 text-stone-700">
+                    ERP: {item.erpStatus}
+                  </span>
+                )}
+              </p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="p-2 text-stone-400 hover:bg-stone-200 rounded-full transition-all">

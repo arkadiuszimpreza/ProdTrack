@@ -52,6 +52,10 @@ export interface ProductionOrder {
   reportedQuantity?: number;
   /** NOWE: Ilość potwierdzona z systemu ERP (Tylko z importu Excel) */
   erpReportedQuantity?: number;
+  /** NOWE: Status z systemu ERP (Tylko z importu Excel) */
+  erpStatus?: string;
+  /** NOWE: Pozycja z systemu ERP (Tylko z importu Excel) */
+  positionNumber?: string;
   /** NOWE: Ilość wyprodukowana i zaraportowana fizycznie na hali (tablety/wpis ręczny) */
   appReportedQuantity?: number;
 
@@ -370,8 +374,10 @@ export interface PurchaseOrderItem {
   expectedDeliveryDate: string; // "Data dostawy"
 
   status: PurchaseOrderStatus;
+  erpStatus?: string; // Status pozycji bezpośrednio z ERP (kolumna "Status")
   importedAt: any; // Timestamp
   rozliczone?: number;
+  isManuallyCompleted?: boolean; // Ręczne zamknięcie przez admina
 }
 
 // --- MAGAZYN WMS ---

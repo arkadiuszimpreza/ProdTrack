@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, onSnapshot, orderBy, writeBatch, doc, serverTimestamp, runTransaction } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { Search, PackageMinus, FileSpreadsheet, User, ClipboardList, ChevronRight, ChevronLeft, X, Box, CheckCircle, Calendar as CalendarIcon } from 'lucide-react';
+import { Search, PackageMinus, FileSpreadsheet, User, ClipboardList, ChevronRight, ChevronLeft, X, Box, CheckCircle, Calendar as CalendarIcon, Lock } from 'lucide-react';
 import { InventoryBatch, MaterialWithdrawal } from '../../types';
 import { generateTransactionNumber, buildTransactionData, getSequenceCounter } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
@@ -39,7 +39,8 @@ const guessPrefix = (name: string, articleNumber?: string): string => {
 type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'PL' | 'FA' | 'SR';
 
 interface MaterialWithdrawalViewProps {
-  currentUser?: string; 
+  currentUser?: string;
+  isAdmin?: boolean;
 }
 
 const getMonday = (date: Date) => {
@@ -56,7 +57,7 @@ const formatDate = (date: Date) => {
   return `${y}-${m}-${d}`;
 };
 
-export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }: MaterialWithdrawalViewProps) {
+export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik', isAdmin = false }: MaterialWithdrawalViewProps) {
   const [batches, setBatches] = useState<InventoryBatch[]>([]);
   const [withdrawals, setWithdrawals] = useState<MaterialWithdrawal[]>([]);
   const [inventoryCounts, setInventoryCounts] = useState<any[]>([]);
@@ -475,6 +476,11 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
   }, [withdrawals, startDate, endDate, hideExported]);
 
   const handleExportToERP = async () => {
+    if (!isAdmin) {
+      alert('Tylko administrator posiada uprawnienia do eksportowania pobrań do pliku ERP.');
+      return;
+    }
+
     let listToExport: any[] = viewMode === 'AGGREGATED' ? aggregatedWithdrawals : filteredHistory;
     
     // If items are selected, only export those
@@ -998,13 +1004,24 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik' }:
                 Zsumowane
               </button>
             </div>
-            <button 
-              onClick={handleExportToERP}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] rounded-lg shadow-sm transition-colors uppercase select-none w-full sm:w-auto justify-center"
-            >
-              <FileSpreadsheet size={13} />
-              Eksportuj (.xlsx)
-            </button>
+            {isAdmin ? (
+              <button 
+                onClick={handleExportToERP}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] rounded-lg shadow-sm transition-colors uppercase select-none w-full sm:w-auto justify-center"
+              >
+                <FileSpreadsheet size={13} />
+                Eksportuj (.xlsx)
+              </button>
+            ) : (
+              <button 
+                disabled
+                title="Wymagane uprawnienia administratora do eksportu do ERP"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-100 border border-stone-200 text-stone-400 font-bold text-[11px] rounded-lg shadow-none cursor-not-allowed uppercase select-none w-full sm:w-auto justify-center opacity-70"
+              >
+                <Lock size={13} className="text-stone-400" />
+                Eksportuj (.xlsx)
+              </button>
+            )}
           </div>
         </div>
 

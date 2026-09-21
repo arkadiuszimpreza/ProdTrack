@@ -27,6 +27,7 @@ export function WMSOperatorDashboard({
   const [view, setView] = useState<'wms-wip' | 'wms-returns' | 'wms-inventory' | null>(null);
 
   const currentUser = currentOperator?.displayName || profile?.displayName || user?.displayName || 'Nieznany Pracownik';
+  const isAdmin = profile?.role?.toLowerCase() === 'admin';
 
   return (
     <div className="min-h-screen bg-stone-50 flex items-stretch justify-center">
@@ -113,7 +114,7 @@ export function WMSOperatorDashboard({
                 exit={{ opacity: 0, y: 20 }}
                 className="h-full overflow-y-auto"
               >
-                {view === 'wms-wip' && <MaterialWithdrawalView currentUser={currentUser} />}
+                {view === 'wms-wip' && <MaterialWithdrawalView currentUser={currentUser} isAdmin={isAdmin} />}
                 {view === 'wms-returns' && <MaterialReturnsView currentUser={currentUser} />}
                 {view === 'wms-inventory' && <InventoryYardView />}
               </motion.div>

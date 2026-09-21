@@ -3,7 +3,7 @@ import {
   Package, Clock, Search, X, Trash2, Upload, List, AlertTriangle, 
   CheckCircle2, LogOut, Info, Settings, Settings2, LayoutList, Boxes, History, 
   Activity, BarChart2, PenTool, Users, Briefcase, FileText, Menu, ChevronRight,
-  Truck, BookOpen, PackageMinus, ClipboardCheck, PackagePlus, RotateCcw, Archive, FileSpreadsheet, Weight, Layers
+  Truck, BookOpen, PackageMinus, ClipboardCheck, PackagePlus, RotateCcw, Archive, FileSpreadsheet, Weight, Layers, CheckSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInSeconds } from 'date-fns';
@@ -41,9 +41,11 @@ import { DocsView } from '../administracja/DocsView';
 import { LiveWorkView } from '../production/LiveWorkView';
 import { OrderLogsView } from '../production/OrderLogsView';
 import { ClientOrderSummaryView } from '../management/ClientOrderSummaryView';
+import { OrdersOverviewView } from '../management/OrdersOverviewView';
 
 // IMPORTY WMS
 import { ExpectedDeliveriesView } from '../wms/ExpectedDeliveriesView';
+import { ExpectedDeliveriesAdminView } from '../wms/ExpectedDeliveriesAdminView';
 import { InventoryYardView } from '../wms/InventoryYardView';
 import { ReceiveDeliveryModal } from '../wms/ReceiveDeliveryModal';
 import { ArticleRegistryView } from '../wms/ArticleRegistryView';
@@ -112,7 +114,7 @@ interface MainDashboardProps {
 }
 
 export function MainDashboard(props: MainDashboardProps) {
-  const [view, setView] = useState<'orders' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'attendance-import' | 'attendance-oee' | 'timeline' | 'stations' | 'docs' | 'live' | 'element-stats' | 'tonnage-stats' | 'wms-inventory' | 'wms-deliveries' | 'wms-registry' | 'wms-coeffs' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations' | 'wms-ledger' | 'tech-operations' | 'tech-processes' | 'missing-weights' | 'tech-board-drawings'>('live');
+  const [view, setView] = useState<'orders' | 'orders-overview' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'attendance-import' | 'attendance-oee' | 'timeline' | 'stations' | 'docs' | 'live' | 'element-stats' | 'tonnage-stats' | 'wms-inventory' | 'wms-deliveries' | 'wms-deliveries-admin' | 'wms-registry' | 'wms-coeffs' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations' | 'wms-ledger' | 'tech-operations' | 'tech-processes' | 'missing-weights' | 'tech-board-drawings'>('live');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeStatuses, setActiveStatuses] = useState<ProductionOrder['status'][]>(['pending', 'in-progress', 'reported', 'completed']);
   const [manualEntryVersion, setManualEntryVersion] = useState<1 | 2>(1);
@@ -152,7 +154,7 @@ export function MainDashboard(props: MainDashboardProps) {
 
   // Pobieranie wszystkich zleceń z bazy, gdy wejdziemy w widok analityczny
   useEffect(() => {
-    const isAnalyticalView = ['tonnage-stats', 'element-stats', 'reports', 'timeline'].includes(view);
+    const isAnalyticalView = ['tonnage-stats', 'element-stats', 'reports', 'timeline', 'orders-overview'].includes(view);
     
     if (isAnalyticalView && !analyticalOrders && !isFetchingAnalytical) {
       setIsFetchingAnalytical(true);
@@ -369,19 +371,23 @@ export function MainDashboard(props: MainDashboardProps) {
     <button 
       onClick={onClick} 
       className={cn(
-        "w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group",
+        "w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group/btn",
         active 
           ? "bg-stone-900 text-white shadow-sm" 
           : "text-stone-600 hover:bg-stone-100 hover:text-stone-900"
       )}
     >
       <div className="flex items-center gap-3">
-        <div className={cn("transition-colors", active ? "text-stone-300" : "text-stone-400 group-hover:text-stone-600")}>
+        <div className={cn("transition-colors shrink-0", active ? "text-stone-300" : "text-stone-400 group-hover/btn:text-stone-600")}>
           {icon}
         </div>
-        {text}
+        <span className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">
+          {text}
+        </span>
       </div>
-      {right}
+      <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 shrink-0">
+        {right}
+      </div>
     </button>
   );
 
@@ -401,50 +407,49 @@ export function MainDashboard(props: MainDashboardProps) {
 
         {/* SIDEBAR */}
         <aside className={cn(
-          "fixed inset-y-0 left-0 z-50 w-64 md:w-72 bg-white border-r border-stone-200 flex flex-col transform transition-transform duration-300 md:relative md:translate-x-0 print:hidden",
-          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+          "fixed inset-y-0 left-0 z-50 bg-white border-r border-stone-200 flex flex-col transform transition-all duration-300 print:hidden overflow-hidden group",
+          isSidebarOpen ? "translate-x-0" : "-translate-x-full",
+          "w-64 md:translate-x-0 md:w-16 md:hover:w-72 md:absolute md:h-screen"
         )}>
-          <div className="p-4 border-b border-stone-100 shrink-0">
-            <div className="flex justify-between items-center mb-4">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center text-white shadow-inner"><Package size={18} /></div>
-                <span className="font-bold text-lg tracking-tight">ProdTrack</span>
-              </div>
-              <button className="md:hidden p-2 -mr-2 text-stone-400 hover:bg-stone-100 rounded-lg" onClick={() => setIsSidebarOpen(false)}><X size={20} /></button>
+          <div className="p-4 border-b border-stone-100 shrink-0 h-[72px] flex items-center justify-between w-64 md:w-72">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center text-white shadow-inner shrink-0"><Package size={18} /></div>
+              <span className="font-bold text-lg tracking-tight whitespace-nowrap opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">ProdTrack</span>
             </div>
-            
-            <div className="bg-stone-50 rounded-xl p-3 border border-stone-100/80 flex justify-between items-center shadow-sm">
-              <div className="flex flex-col overflow-hidden pr-2">
-                <span className="text-sm font-bold text-stone-900 truncate">{props.profile?.displayName || 'Użytkownik'}</span>
-                <span className="text-[10px] text-stone-500 uppercase tracking-widest truncate">{props.overrideRole || props.profile?.role || 'Brak Roli'}</span>
-              </div>
-              <button onClick={props.onLogout} className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all shrink-0" title="Wyloguj"><LogOut size={16} /></button>
+            <button className="md:hidden p-2 -mr-2 text-stone-400 hover:bg-stone-100 rounded-lg" onClick={() => setIsSidebarOpen(false)}><X size={20} /></button>
+          </div>
+          
+          <div className="bg-stone-50 rounded-xl p-3 border border-stone-100/80 flex justify-between items-center shadow-sm m-3 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 w-[232px] md:w-[264px] shrink-0">
+            <div className="flex flex-col overflow-hidden pr-2">
+              <span className="text-sm font-bold text-stone-900 truncate">{props.profile?.displayName || 'Użytkownik'}</span>
+              <span className="text-[10px] text-stone-500 uppercase tracking-widest truncate">{props.overrideRole || props.profile?.role || 'Brak Roli'}</span>
             </div>
-
-            {props.user?.email === 'arkadiusz.biesiada@erplast.pl' && (
-              <div className="mt-2 text-stone-600">
-                <select
-                  value={props.overrideRole || props.profile?.role || ''}
-                  onChange={(e) => props.setOverrideRole(e.target.value as any)}
-                  className="w-full bg-stone-100 border border-stone-200 text-stone-700 text-xs font-bold uppercase tracking-wider rounded-lg p-2 outline-none cursor-pointer hover:bg-stone-200 transition-colors"
-                >
-                  <option value="admin">ADMIN</option>
-                  <option value="worker">WORKER</option>
-                  <option value="operator">OPERATOR</option>
-                  <option value="operator-wms">OPERATOR WMS</option>
-                  <option value="operator-tablice">OPERATOR TABLICE</option>
-                  <option value="magazynier">MAGAZYNIER</option>
-                  <option value="tv-monitor">TV MONITOR</option>
-                  <option value="podglad">PODGLĄD</option>
-                </select>
-              </div>
-            )}
+            <button onClick={props.onLogout} className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all shrink-0" title="Wyloguj"><LogOut size={16} /></button>
           </div>
 
-          <div className="flex-1 overflow-y-auto py-4 px-3 space-y-6 custom-scrollbar">
+          {props.user?.email === 'arkadiusz.biesiada@erplast.pl' && (
+            <div className="px-3 mb-2 text-stone-600 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 w-64 md:w-72 shrink-0">
+              <select
+                value={props.overrideRole || props.profile?.role || ''}
+                onChange={(e) => props.setOverrideRole(e.target.value as any)}
+                className="w-full bg-stone-100 border border-stone-200 text-stone-700 text-xs font-bold uppercase tracking-wider rounded-lg p-2 outline-none cursor-pointer hover:bg-stone-200 transition-colors"
+              >
+                <option value="admin">ADMIN</option>
+                <option value="worker">WORKER</option>
+                <option value="operator">OPERATOR</option>
+                <option value="operator-wms">OPERATOR WMS</option>
+                <option value="operator-tablice">OPERATOR TABLICE</option>
+                <option value="magazynier">MAGAZYNIER</option>
+                <option value="tv-monitor">TV MONITOR</option>
+                <option value="podglad">PODGLĄD</option>
+              </select>
+            </div>
+          )}
+
+          <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 px-3 space-y-6 custom-scrollbar w-64 md:w-72">
             {role !== 'MAGAZYNIER' && !isPodglad && (
               <div>
-                <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2">Produkcja</h4>
+                <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2 whitespace-nowrap">Produkcja</h4>
                 <div className="space-y-1">
                   <SidebarItem active={view === 'live'} onClick={() => { setView('live'); setIsSidebarOpen(false); }} icon={<Activity size={18} />} text="Live Hala" right={<span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>} />
                   <SidebarItem active={view === 'orders'} onClick={() => { setView('orders'); setIsSidebarOpen(false); }} icon={<LayoutList size={18} />} text="Bieżące Zlecenia" />
@@ -456,7 +461,7 @@ export function MainDashboard(props: MainDashboardProps) {
 
             {isPodglad && (
               <div>
-                <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2">Podgląd</h4>
+                <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2 whitespace-nowrap">Podgląd</h4>
                 <div className="space-y-1">
                   <SidebarItem active={view === 'live'} onClick={() => { setView('live'); setIsSidebarOpen(false); }} icon={<Activity size={18} />} text="Live Hala" right={<span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>} />
                   <SidebarItem active={view === 'wms-inventory'} onClick={() => { setView('wms-inventory'); setIsSidebarOpen(false); }} icon={<Package size={18} />} text="Stan Placu" />
@@ -468,11 +473,14 @@ export function MainDashboard(props: MainDashboardProps) {
 
             {isWMSUser && (
               <div>
-                <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mt-6 mb-2">Magazyn WMS</h4>
+                <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mt-6 mb-2 whitespace-nowrap">Magazyn WMS</h4>
                 <div className="space-y-1">
                   <SidebarItem active={view === 'wms-inventory'} onClick={() => { setView('wms-inventory'); setIsSidebarOpen(false); }} icon={<Package size={18} />} text="Stan Placu" />
                   <SidebarItem active={view === 'wms-reservations'} onClick={() => { setView('wms-reservations'); setIsSidebarOpen(false); }} icon={<FileSpreadsheet size={18} />} text="Rezerwacje Materiałowe" />
                   <SidebarItem active={view === 'wms-deliveries'} onClick={() => { setView('wms-deliveries'); setIsSidebarOpen(false); }} icon={<Truck size={18} />} text="Zakupy (Oczekujące)" />
+                  {props.isAdmin && (
+                    <SidebarItem active={view === 'wms-deliveries-admin'} onClick={() => { setView('wms-deliveries-admin'); setIsSidebarOpen(false); }} icon={<CheckSquare size={18} />} text="Zamknij Zlecenia WMS" />
+                  )}
                   <SidebarItem active={view === 'wms-registry'} onClick={() => { setView('wms-registry'); setIsSidebarOpen(false); }} icon={<BookOpen size={18} />} text="Katalog Artykułów" />
                   <SidebarItem active={view === 'wms-coeffs'} onClick={() => { setView('wms-coeffs'); setIsSidebarOpen(false); }} icon={<Settings2 size={18} />} text="Przeliczniki Stali" />
                   <SidebarItem active={view === 'wms-wip'} onClick={() => { setView('wms-wip'); setIsSidebarOpen(false); }} icon={<PackageMinus size={18} />} text="Pobranie na Produkcję" />
@@ -490,8 +498,9 @@ export function MainDashboard(props: MainDashboardProps) {
             {props.isAdmin && (
               <>
                 <div className="mt-6">
-                  <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2">Zarządzanie</h4>
+                  <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">Zarządzanie</h4>
                   <div className="space-y-1">
+                    <SidebarItem active={view === 'orders-overview'} onClick={() => { setView('orders-overview'); setIsSidebarOpen(false); }} icon={<List size={18} />} text="Przegląd Zleceń (Tabela)" />
                     <SidebarItem active={view === 'reports'} onClick={() => { setView('reports'); setIsSidebarOpen(false); }} icon={<BarChart2 size={18} />} text="Raporty i Audyt" />
                     <SidebarItem active={view === 'timeline'} onClick={() => { setView('timeline'); setIsSidebarOpen(false); }} icon={<Clock size={18} />} text="Oś czasu pracowników" />
                     <SidebarItem active={view === 'element-stats'} onClick={() => { setView('element-stats'); setIsSidebarOpen(false); }} icon={<Package size={18} />} text="Statystyki Elementów" />
@@ -503,7 +512,7 @@ export function MainDashboard(props: MainDashboardProps) {
                   </div>
                 </div>
                 <div>
-                  <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2">Administracja</h4>
+                  <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">Administracja</h4>
                   <div className="space-y-1">
                     <SidebarItem active={view === 'employees'} onClick={() => { setView('employees'); setIsSidebarOpen(false); }} icon={<Users size={18} />} text="Pracownicy" />
                     <SidebarItem active={view === 'stations'} onClick={() => { setView('stations'); setIsSidebarOpen(false); }} icon={<Briefcase size={18} />} text="Stanowiska" />
@@ -520,7 +529,7 @@ export function MainDashboard(props: MainDashboardProps) {
         </aside>
 
         {/* MAIN CONTENT AREA */}
-        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden md:ml-16">
           
           {/* MOBILE HEADER */}
           <header className="md:hidden bg-white border-b border-stone-200 px-4 h-14 flex items-center justify-between shrink-0 print:hidden shadow-sm z-30">
@@ -532,7 +541,7 @@ export function MainDashboard(props: MainDashboardProps) {
           </header>
 
           <main className="flex-1 overflow-y-auto p-4 md:p-8 print:p-0 print:overflow-visible custom-scrollbar scroll-smooth">
-            <div className={cn("mx-auto space-y-6 pb-24", view.startsWith('wms-') ? "w-full max-w-[1920px]" : "max-w-5xl")}>
+            <div className={cn("mx-auto space-y-6 pb-24", (view.startsWith('wms-') || view === 'orders-overview') ? "w-full max-w-[1920px]" : "max-w-5xl")}>
               
               {/* MODALS */}
               <AnimatePresence>
@@ -710,6 +719,8 @@ export function MainDashboard(props: MainDashboardProps) {
                 <BoardDrawingsManager orders={props.orders} userProfile={props.profile} />
               ) : view === 'missing-weights' ? (
                 <MissingWeightsView orders={props.orders} onEditElements={setEditingOrderElements} />
+              ) : view === 'orders-overview' && props.isAdmin ? (
+                <OrdersOverviewView orders={ordersForAnalyticalViews} />
               ) : view === 'manual-entry' && props.isAdmin ? (
                 <div className="space-y-6">
                   <div className="flex justify-center">
@@ -767,19 +778,25 @@ export function MainDashboard(props: MainDashboardProps) {
               ) : view === 'reports' && props.isAdmin ? (
                 <ReportsView employees={props.employees} orders={ordersForAnalyticalViews} />
               ) : view === 'timeline' && (props.isAdmin || isPodglad) ? (
-                <EmployeeTimelineView orders={ordersForAnalyticalViews} onViewOrderLogs={setViewingOrderLogs} />
+                <EmployeeTimelineView 
+                  orders={ordersForAnalyticalViews} 
+                  onViewOrderLogs={setViewingOrderLogs} 
+                  onEditElements={setEditingOrderElements}
+                />
               ) : view === 'wms-inventory' && (isWMSUser || isPodglad) ? (
                 <InventoryYardView readOnly={isPodglad} />
               ) : view === 'wms-reservations' && (isWMSUser || isPodglad) ? (
                 <MaterialReservationsView readOnly={isPodglad} />
               ) : view === 'wms-deliveries' && isWMSUser ? (
-                <ExpectedDeliveriesView onReceiveClick={setItemToReceive} currentUser={currentUser} />
+                <ExpectedDeliveriesView onReceiveClick={setItemToReceive} currentUser={currentUser} isAdmin={props.isAdmin} />
+              ) : view === 'wms-deliveries-admin' && props.isAdmin ? (
+                <ExpectedDeliveriesAdminView currentUser={currentUser} />
               ) : view === 'wms-registry' && isWMSUser ? (
                 <ArticleRegistryView />
               ) : view === 'wms-coeffs' && isWMSUser ? (
                 <WeightCoefficientsView />
               ) : view === 'wms-wip' && isWMSUser ? (
-                <MaterialWithdrawalView currentUser={currentUser} />
+                <MaterialWithdrawalView currentUser={currentUser} isAdmin={props.isAdmin} />
               ) : view === 'wms-returns' && isWMSUser ? (
                 <MaterialReturnsView currentUser={currentUser} />
               ) : view === 'wms-taking' && isWMSUser ? (
