@@ -70,24 +70,41 @@ service cloud.firestore {
              request.auth.token.email_verified == true;
     }
 
-    function isNotReadOnly() {
-      let role = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
-      return role != 'tv-monitor' && role != 'podglad';
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserRole() == 'admin' ||
+        request.auth.token.email == 'arkadiusz.biesiada@erplast.pl'
+      );
+    }
+
+    // Role magazynowe z dostępem do operacji WMS
+    function isWmsRole() {
+      return isAuthenticated() && (
+        isAdmin() || 
+        getUserRole() in ['magazynier', 'operator-wms']
+      );
+    }
+
+    // Biała lista aktywnych ról uprawnionych do zapisu w systemie
+    // Wyklucza: 'pending', 'tv-monitor', 'podglad' oraz wszelkie nieznane role
+    function isApprovedUser() {
+      let role = getUserRole();
+      return role in ['admin', 'worker', 'operator', 'operator-tablice', 'magazynier', 'operator-wms'];
     }
 
     function canWrite() {
-      return isAuthenticated() && isNotReadOnly();
+      return isAuthenticated() && (isAdmin() || isApprovedUser());
     }
 
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isAdmin() {
-      return isAuthenticated() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-    }
-
+    // WALIDATORY INTEGRALNOŚCI DANYCH (NIETYKALNE wg AGENTS.md Reguła I)
     function isValidOrder(data) {
       return data.orderNumber is string && data.orderNumber.size() > 0 && data.orderNumber.size() < 100 &&
              data.productName is string && data.productName.size() > 0 && data.productName.size() < 500 &&
@@ -109,7 +126,7 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.displayName is string && data.displayName.size() > 0 &&
-             data.email is string && data.role in ['admin', 'worker', 'operator', 'magazynier', 'operator-wms', 'tv-monitor', 'podglad', 'pending'];
+             data.email is string && data.role in ['admin', 'worker', 'operator', 'magazynier', 'operator-wms', 'tv-monitor', 'podglad', 'operator-tablice', 'pending'];
     }
 
     function isValidEmployee(data) {
@@ -134,101 +151,104 @@ service cloud.firestore {
 
     // Rules
 
+    // --- KOLEKCJE MAGAZYNOWE (WMS) ---
+
     match /expectedDeliveries/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update: if isWmsRole();
+      allow delete: if isAdmin();
     }
 
     match /inventoryBatches/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update, delete: if isWmsRole();
     }
 
     match /materialWithdrawals/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update: if isWmsRole();
+      allow delete: if isAdmin();
     }
 
     match /materialReservations/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update, delete: if isWmsRole();
     }
 
     match /inventoryCounts/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update, delete: if isWmsRole();
     }
 
     match /inventoryAdjustments/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update: if isWmsRole();
+      allow delete: if isAdmin();
     }
 
     match /inventoryArticles/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update: if isWmsRole();
+      allow delete: if isAdmin();
     }
 
-    // NOWA REGUŁA — rejestr transakcji magazynowych (WMS).
-    // W kodzie tworzony wyłącznie przez create (append-only ledger),
-    // nigdzie nie jest edytowany ani usuwany po utworzeniu.
+    // Rejestr transakcji magazynowych (WMS).
+    // Tworzony wyłącznie przez create (append-only ledger). Edycja i kasowanie tylko admin.
     match /inventoryTransactions/{document} {
       allow read: if isAuthenticated();
-      allow create: if canWrite();
+      allow create: if isWmsRole();
       allow update, delete: if isAdmin();
-    }
-
-    match /techOperations/{document} {
-      allow read: if isAuthenticated();
-      allow write: if canWrite();
-    }
-
-    match /techProcesses/{document} {
-      allow read: if isAuthenticated();
-      allow write: if canWrite();
     }
 
     match /wmsReceiptsBackup/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update, delete: if isWmsRole();
     }
 
+    // Sekwencje i liczniki numeracji dokumentów WMS.
+    // Zapis dla ról magazynowych, bezwzględna ochrona przed usunięciem.
     match /system_configs/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update: if isWmsRole();
+      allow delete: if isAdmin();
     }
 
+    // Ustawienia systemowe WMS (np. znacznik importu awizacji)
     match /systemSettings/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update: if isWmsRole();
+      allow delete: if isAdmin();
     }
 
-    // NOWA REGUŁA — metadane systemowe (np. znacznik ostatniego importu zleceń).
-    // Zapis wykonuje każdy użytkownik robiący import, nie tylko admin.
+    // --- KOLEKCJE ADMINISTRACYJNE I SYSTEMOWE ---
+
+    // Metadane systemowe (np. znacznik importu zleceń wykonywany przez administratora)
     match /system/{document} {
       allow read: if isAuthenticated();
-      allow write: if canWrite();
+      allow create, update, delete: if isAdmin();
     }
 
-    // NOWA REGUŁA — dane obecności / OEE, importowane w panelu administracji.
-    // Dane HR-owe, zapis tylko dla admina.
+    match /techOperations/{document} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /techProcesses/{document} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
     match /attendance/{document} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
 
-    // NOWA REGUŁA — rysunki tablic produkcyjnych.
-    // Zarządzane w panelu administracji, czytane na hali produkcyjnej.
     match /boardDrawings/{document} {
       allow read: if isAuthenticated();
       allow create, update, delete: if isAdmin();
     }
 
-    // POPRAWIONA REGUŁA — dodana walidacja isValidUser() i zablokowana
-    // możliwość samodzielnej zmiany własnej roli (eskalacja uprawnień).
-    // Nowo tworzony profil (pierwsze logowanie) może mieć tylko rolę 'worker';
-    // nadanie innej roli wymaga admina. Konto z zaszytym e-mailem admina
-    // i tak dostaje pełne prawa przez isAdmin(), niezależnie od pola role.
+    // Zabezpieczenie przed samodzielną zmianą roli przez użytkownika.
     match /users/{userId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() ||
@@ -238,7 +258,20 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // POPRAWIONA REGUŁA — walidacja danych również przy create (wcześniej tylko przy update).
+    match /employees/{employeeId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidEmployee(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /workStations/{stationId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidWorkStation(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // --- KOLEKCJE PRODUKCYJNE I REJESTRACJI PRACY ---
+
     match /orders/{orderId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidOrder(request.resource.data);
@@ -249,29 +282,14 @@ service cloud.firestore {
     match /workLogs/{logId} {
       allow read: if isAuthenticated();
       allow create: if canWrite() && isValidWorkLog(request.resource.data);
-      allow update: if canWrite();
-      allow delete: if isAdmin();
-    }
-
-    match /employees/{employeeId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAdmin() && isValidEmployee(request.resource.data);
-      allow delete: if isAdmin();
-    }
-
-    // POPRAWIONA REGUŁA — delete wydzielony osobno. Wcześniej isValidWorkStation()
-    // było wywoływane także dla delete, gdzie request.resource.data nie istnieje,
-    // przez co usuwanie stanowisk roboczych zawsze kończyło się odmową.
-    match /workStations/{stationId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAdmin() && isValidWorkStation(request.resource.data);
+      allow update: if canWrite() && isValidWorkLog(request.resource.data) && request.resource.data.userId == resource.data.userId;
       allow delete: if isAdmin();
     }
 
     match /workSessions/{sessionId} {
       allow read: if isAuthenticated();
       allow create: if canWrite() && isValidWorkSession(request.resource.data);
-      allow update: if canWrite();
+      allow update: if canWrite() && isValidWorkSession(request.resource.data);
       allow delete: if isAdmin();
     }
   }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   collection, updateDoc, setDoc, doc, getDoc, 
-  deleteDoc, writeBatch, serverTimestamp, addDoc, getDocs 
+  deleteDoc, writeBatch, serverTimestamp, addDoc, getDocs, onSnapshot 
 } from 'firebase/firestore';
 import { 
   signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, 
@@ -32,6 +32,7 @@ import { WMSOperatorDashboard } from './components/wms/WMSOperatorDashboard';
 import { VirtualKeyboard } from './components/common/VirtualKeyboard';
 import { KeyboardToggle } from './components/common/KeyboardToggle';
 import { OperatorPanelTablice } from './components/production/OperatorPanelTablice';
+import { PendingApprovalView } from './components/common/PendingApprovalView';
 import { useDeviceEnvironment } from './contexts/DeviceEnvironmentContext';
 
 // --- Utils ---
@@ -53,19 +54,22 @@ export default function App() {
   
   const currentRole = (overrideRole || profile?.role)?.toLowerCase() as UserRole | undefined;
   const isAdmin = currentRole === 'admin';
+  const isPending = currentRole === 'pending';
   const { customKeyboardEnabled: showKeyboard } = useDeviceEnvironment();
   const [wmsMode, setWmsMode] = useState(false);
+  const [isRefreshingProfile, setIsRefreshingProfile] = useState(false);
 
   // 2. Dyspozytor Danych (Nasz wydzielony Hook do odczytu)
+  // Jeśli konto oczekuje na zatwierdzenie (pending), nie uruchamiamy subskrypcji danych produkcyjnych
   const { 
     orders, employees, workStations, activeSessions, activeLog, setActiveLog, allActiveLogs, systemMetadata 
-  } = useProductionData(user, isAdmin, currentOperator);
+  } = useProductionData(isPending ? null : user, isAdmin, currentOperator);
 
   // 3. Kierownik Zmiany (Nasz wydzielony Hook do operacji na czasie pracy)
   const { 
     startWork, startTeamWork, joinTeam, stopWork 
   } = useWorkManager({
-    user, currentOperator, activeLog, setActiveLog, activeSessions, orders
+    user: isPending ? null : user, currentOperator, activeLog, setActiveLog, activeSessions, orders
   });
 
   // NOWE: 3.5. Dyspozytor Wpisów Ręcznych
@@ -80,23 +84,57 @@ export default function App() {
 
   // --- LOGIKA AUTORYZACJI ---
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+    let unsubProfileSnapshot: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
+      if (unsubProfileSnapshot) {
+        unsubProfileSnapshot();
+        unsubProfileSnapshot = null;
+      }
+
       setUser(u);
       if (u) {
-        const userDoc = await getDoc(doc(db, 'users', u.uid));
+        const userRef = doc(db, 'users', u.uid);
+        const userDoc = await getDoc(userRef);
         if (userDoc.exists()) {
           setProfile({ ...userDoc.data(), uid: u.uid } as UserProfile);
         } else {
           const newProfile = { uid: u.uid, displayName: u.displayName || 'Użytkownik', email: u.email || '', role: 'pending' };
-          await setDoc(doc(db, 'users', u.uid), newProfile);
+          await setDoc(userRef, newProfile);
           setProfile(newProfile as UserProfile);
         }
+
+        // Live snapshot profilu — natychmiastowe odblokowanie po zatwierdzeniu roli przez admina
+        unsubProfileSnapshot = onSnapshot(userRef, (snap) => {
+          if (snap.exists()) {
+            setProfile({ ...snap.data(), uid: u.uid } as UserProfile);
+          }
+        });
       } else {
         setProfile(null);
       }
       setLoading(false);
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubProfileSnapshot) unsubProfileSnapshot();
+    };
+  }, []);
+
+  const refreshProfile = useCallback(async () => {
+    if (!auth.currentUser) return;
+    setIsRefreshingProfile(true);
+    try {
+      const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
+      if (userDoc.exists()) {
+        setProfile({ ...userDoc.data(), uid: auth.currentUser.uid } as UserProfile);
+      }
+    } catch (e) {
+      console.error('Błąd podczas odświeżania profilu:', e);
+    } finally {
+      setIsRefreshingProfile(false);
+    }
   }, []);
 
   const handleLogin = async () => { 
@@ -225,6 +263,18 @@ export default function App() {
       </motion.div>
     </div>
   );
+
+  if (isPending) {
+    return (
+      <PendingApprovalView 
+        user={user}
+        profile={profile}
+        onRefresh={refreshProfile}
+        isRefreshing={isRefreshingProfile}
+        onLogout={handleLogout}
+      />
+    );
+  }
 
   if ((currentRole === 'operator' || currentRole === 'operator-wms' || currentRole === 'operator-tablice') && !currentOperator) {
     return (
