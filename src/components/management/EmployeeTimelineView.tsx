@@ -2,12 +2,97 @@ import React, { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, Timestamp, orderBy, documentId, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { WorkLog, Employee, ProductionOrder } from '../../types';
-import { Calendar, ChevronLeft, ChevronRight, Loader2, RefreshCw, History, Pencil, Plus, List } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Loader2, RefreshCw, History, Pencil, Plus, List, Scale, AlertTriangle } from 'lucide-react';
 import { format, startOfDay, endOfDay, addDays, subDays } from 'date-fns';
 import { pl } from 'date-fns/locale';
 import { EditLogModal, AddLogModal } from '../production/OrderLogsView';
 import { OrderElementEditor } from '../production/OrderElementEditor';
 import { calculateOrderStatus } from '../../utils/orderStatus';
+
+interface LogWeightInfo {
+  hasWeight: boolean;
+  badgeText: string;
+  tooltipText: string;
+  weightValue?: number;
+  type: 'element' | 'order' | 'none';
+}
+
+function getLogWeightInfo(log: WorkLog, order?: ProductionOrder): LogWeightInfo {
+  if (!order) {
+    return {
+      hasWeight: false,
+      badgeText: 'Brak wagi',
+      tooltipText: 'Brak powiązanego zlecenia / brak danych o wadze',
+      type: 'none',
+    };
+  }
+
+  const isElementLog = !!(log.elementId || log.elementName);
+
+  if (isElementLog) {
+    const matchedElement = order.elements?.find(e => 
+      (log.elementId && e.id === log.elementId) ||
+      (log.elementName && e.name && e.name.trim().toLowerCase() === log.elementName.trim().toLowerCase())
+    );
+
+    if (matchedElement) {
+      const w = matchedElement.weight;
+      if (typeof w === 'number' && w > 0) {
+        return {
+          hasWeight: true,
+          badgeText: `${w} kg`,
+          tooltipText: `Element: ${matchedElement.name} | Waga: ${w} kg`,
+          weightValue: w,
+          type: 'element',
+        };
+      }
+      return {
+        hasWeight: false,
+        badgeText: 'Brak wagi el.',
+        tooltipText: `Element: ${matchedElement.name} | BRAK WPISANEJ WAGI!`,
+        type: 'element',
+      };
+    }
+
+    return {
+      hasWeight: false,
+      badgeText: 'Brak wagi el.',
+      tooltipText: `Element: ${log.elementName || 'nieznany'} | Brak w liście elementów zlecenia`,
+      type: 'element',
+    };
+  }
+
+  // Not an element log - whole order
+  if (typeof order.totalWeight === 'number' && order.totalWeight > 0) {
+    return {
+      hasWeight: true,
+      badgeText: `${order.totalWeight} kg`,
+      tooltipText: `Zlecenie (waga całkowita): ${order.totalWeight} kg`,
+      weightValue: order.totalWeight,
+      type: 'order',
+    };
+  }
+
+  if (order.elements && order.elements.length > 0) {
+    const sumWeight = order.elements.reduce((acc, el) => acc + (el.weight || 0), 0);
+    if (sumWeight > 0) {
+      return {
+        hasWeight: true,
+        badgeText: `${sumWeight} kg`,
+        tooltipText: `Zlecenie (suma wag elementów): ${sumWeight} kg`,
+        weightValue: sumWeight,
+        type: 'order',
+      };
+    }
+  }
+
+  return {
+    hasWeight: false,
+    badgeText: 'Brak wagi ZP',
+    tooltipText: `Zlecenie: ${order.orderNumber || log.orderNumber || 'Brak'} | BRAK WPISANEJ WAGI!`,
+    type: 'order',
+  };
+}
 
 export const EmployeeTimelineView: React.FC<{ 
   orders?: ProductionOrder[];
@@ -23,8 +108,20 @@ export const EmployeeTimelineView: React.FC<{
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [editingLog, setEditingLog] = useState<WorkLog | null>(null);
   const [editingOrderElements, setEditingOrderElements] = useState<ProductionOrder | null>(null);
+  const [localOrderOverrides, setLocalOrderOverrides] = useState<Record<string, Partial<ProductionOrder>>>({});
   const [isAddingGlobalLog, setIsAddingGlobalLog] = useState(false);
   const [addingLogForEmployee, setAddingLogForEmployee] = useState<Employee | null>(null);
+
+  // Synchronizacja historicalOrders przy zmianie nadrzędnego propsa orders
+  useEffect(() => {
+    if (orders && orders.length > 0) {
+      const ordersMap = new Map(orders.map(o => [o.id, o]));
+      setHistoricalOrders(prev => prev.map(h => {
+        const updated = ordersMap.get(h.id);
+        return updated ? { ...h, ...updated } : h;
+      }));
+    }
+  }, [orders]);
 
   useEffect(() => {
     fetchEmployees();
@@ -178,11 +275,11 @@ export const EmployeeTimelineView: React.FC<{
               RĘCZNE
             </button>
           </div>
-          <div className="flex items-center bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+          <div className="flex items-center bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden flex-shrink-0">
             <button onClick={handlePrevDay} className="p-2 hover:bg-slate-50 text-slate-600 border-r border-slate-200 transition-colors">
               <ChevronLeft size={18} />
             </button>
-            <div className="px-4 py-2 font-medium text-slate-700 min-w-[160px] text-center text-sm">
+            <div className="px-4 py-2 font-medium text-slate-700 min-w-[160px] text-center text-sm select-none">
               {format(selectedDate, 'd MMMM yyyy', { locale: pl })}
             </div>
             <button onClick={handleNextDay} className="p-2 hover:bg-slate-50 text-slate-600 border-l border-slate-200 transition-colors">
@@ -295,16 +392,23 @@ export const EmployeeTimelineView: React.FC<{
                           const style = getLogStyle(log);
                           const isFinished = !!log.endTime;
                           const isExpanded = expandedLogId === log.id;
-                          const order = orders?.find(o => o.id === log.orderId) || historicalOrders.find(o => o.id === log.orderId);
+                          const rawOrder = orders?.find(o => o.id === log.orderId || (log.orderNumber && o.orderNumber === log.orderNumber)) || 
+                                           historicalOrders.find(o => o.id === log.orderId || (log.orderNumber && o.orderNumber === log.orderNumber));
+                          const order = rawOrder ? { ...rawOrder, ...(localOrderOverrides[rawOrder.id] || {}) } : undefined;
                           const productName = log.productName || order?.productName;
                           const clientName = log.clientName || order?.clientName;
                           const projectNumber = order?.projectNumber;
+                          const weightInfo = getLogWeightInfo(log, order);
                           
                           return (
                             <div 
                               key={log.id}
                               onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
-                              className={`absolute border rounded-md px-3 shadow-sm hover:shadow-md transition-all cursor-pointer group/log flex items-center ${isFinished ? 'bg-white border-slate-300' : 'bg-emerald-50 border-emerald-400 shadow-emerald-100 border-dashed'} ${isExpanded ? 'z-50 ring-2 ring-indigo-500 h-auto py-2' : (isFinished ? 'overflow-hidden' : 'overflow-visible z-20')}`}
+                              className={`absolute border rounded-md px-2.5 shadow-sm hover:shadow-md transition-all cursor-pointer group/log flex items-center border-l-4 ${
+                                weightInfo.hasWeight ? 'border-l-emerald-500' : 'border-l-rose-500'
+                              } ${
+                                isFinished ? 'bg-white border-slate-300' : 'bg-emerald-50 border-emerald-400 shadow-emerald-100 border-dashed'
+                              } ${isExpanded ? 'z-50 ring-2 ring-indigo-500 h-auto py-2' : (isFinished ? 'overflow-hidden' : 'overflow-visible z-20')}`}
                               style={{ 
                                 ...style, 
                                 top: `${laneIndex * 56 + 8}px`, 
@@ -315,14 +419,57 @@ export const EmployeeTimelineView: React.FC<{
                                 maxWidth: isExpanded ? `max(460px, ${style.width})` : 'none',
                                 zIndex: isExpanded ? 50 : (!isFinished ? 20 : 10),
                               }}
-                              title={`Zlecenie: ${log.orderNumber || 'Brak'} \nElement: ${log.elementName || '-'} \nCzas: ${format((log.startTime as any).toDate(), 'HH:mm')} - ${log.endTime ? format((log.endTime as any).toDate(), 'HH:mm') : 'teraz'}`}
+                              title={`Zlecenie: ${log.orderNumber || 'Brak'} \nElement: ${log.elementName || '-'} \nWaga: ${weightInfo.badgeText} (${weightInfo.hasWeight ? 'Wprowadzona' : 'BRAK WAGI'}) \nCzas: ${format((log.startTime as any).toDate(), 'HH:mm')} - ${log.endTime ? format((log.endTime as any).toDate(), 'HH:mm') : 'teraz'}`}
                             >
-                              <div className={`text-xs font-medium leading-tight w-full flex flex-col ${isFinished ? 'text-slate-700 overflow-hidden' : 'text-emerald-800'}`}>
-                                <div className="flex items-baseline gap-1 w-full min-w-0">
-                                  <span className="font-bold shrink-0 whitespace-nowrap">{log.orderNumber || 'Zlecenie'}</span>
-                                  {productName && <span className={`text-[10px] text-slate-500 font-normal ${isExpanded ? '' : (isFinished ? 'truncate' : 'whitespace-nowrap')}`}>{productName}</span>}
+                              <div className={`text-xs font-medium leading-tight w-full flex flex-col justify-center ${isFinished ? 'text-slate-700 overflow-hidden' : 'text-emerald-800'}`}>
+                                <div className="flex items-start justify-between gap-2 w-full min-w-0">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-baseline gap-1.5 w-full min-w-0">
+                                      <span className="font-bold shrink-0 whitespace-nowrap">{log.orderNumber || 'Zlecenie'}</span>
+                                      {productName && (
+                                        <span className={`text-[10px] text-slate-500 font-normal ${isExpanded ? '' : (isFinished ? 'truncate' : 'whitespace-nowrap')}`}>
+                                          {productName}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="mt-0.5 min-w-0">
+                                      {log.elementName ? (
+                                        <div className={`text-[11px] font-medium text-slate-600 ${isExpanded ? '' : (isFinished ? 'truncate' : 'whitespace-nowrap')}`}>
+                                          {log.elementName}
+                                        </div>
+                                      ) : (
+                                        <div className={`text-[10px] text-slate-400 italic ${isExpanded ? '' : (isFinished ? 'truncate' : 'whitespace-nowrap')}`}>
+                                          Całe zlecenie
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Informacja o wadze w prawym górnym narożniku widoczna po kliknięciu w kafelek */}
+                                  {isExpanded && (
+                                    <div className="shrink-0 flex items-center pt-0.5">
+                                      {weightInfo.hasWeight ? (
+                                        <span 
+                                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-xs"
+                                          title={weightInfo.tooltipText}
+                                        >
+                                          <Scale size={11} className="text-emerald-600" />
+                                          <span className="whitespace-nowrap">{weightInfo.badgeText}</span>
+                                        </span>
+                                      ) : (
+                                        <span 
+                                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 shadow-xs"
+                                          title={weightInfo.tooltipText}
+                                        >
+                                          <AlertTriangle size={11} className="text-rose-600" />
+                                          <span className="whitespace-nowrap">{weightInfo.badgeText}</span>
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
-                                {log.elementName ? <div className={`mt-0.5 ${isExpanded ? '' : (isFinished ? 'truncate' : 'whitespace-nowrap')}`}>{log.elementName}</div> : ''}
+
                                 {isExpanded && (
                                   <div className="mt-2 pt-2 border-t border-slate-200/50 flex flex-col gap-1 text-[11px] text-slate-500">
                                     {clientName && (
@@ -445,8 +592,9 @@ export const EmployeeTimelineView: React.FC<{
                   );
                 }
               }
-              await updateDoc(doc(db, 'orders', id), updateData);
+              setLocalOrderOverrides(prev => ({ ...prev, [id]: updateData }));
               setHistoricalOrders(prev => prev.map(o => o.id === id ? { ...o, ...updateData } : o));
+              await updateDoc(doc(db, 'orders', id), updateData);
             } catch (error) {
               console.error("Błąd aktualizacji elementów:", error);
             }

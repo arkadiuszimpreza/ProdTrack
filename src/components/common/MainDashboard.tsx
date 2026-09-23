@@ -111,6 +111,7 @@ interface MainDashboardProps {
   // Role override
   overrideRole: UserProfile['role'] | null;
   setOverrideRole: (role: UserProfile['role'] | null) => void;
+  onUpdateOrder?: (id: string, updateData: Partial<ProductionOrder>) => void;
 }
 
 export function MainDashboard(props: MainDashboardProps) {
@@ -650,7 +651,7 @@ export function MainDashboard(props: MainDashboardProps) {
                         const updateData: any = { elements, totalWeight };
                         if (appReportedQty !== undefined) {
                           updateData.appReportedQuantity = Number(appReportedQty.toFixed(3));
-                          const targetOrder = props.orders.find(o => o.id === id) || (editingOrderElements as any);
+                          const targetOrder = props.orders.find(o => o.id === id) || analyticalOrders?.find(o => o.id === id) || (editingOrderElements as any);
                           if (targetOrder) {
                             const currentErpQty = targetOrder.erpReportedQuantity || targetOrder.reportedQuantity || 0;
                             updateData.status = calculateOrderStatus(
@@ -662,6 +663,28 @@ export function MainDashboard(props: MainDashboardProps) {
                             );
                           }
                         }
+
+                        // 1. Natychmiastowa aktualizacja stanu analitycznego (Oś czasu, statystyki, widok ogólny zleceń)
+                        setAnalyticalOrders(prev => {
+                          if (!prev) return prev;
+                          const exists = prev.some(o => o.id === id);
+                          if (exists) {
+                            return prev.map(o => o.id === id ? { ...o, ...updateData } : o);
+                          }
+                          const fallback = (editingOrderElements as any) || {};
+                          return [{ ...fallback, ...updateData, id }, ...prev];
+                        });
+
+                        // 2. Aktualizacja wyszukiwarki archiwalnej
+                        setArchivedOrders(prev => prev.map(o => o.id === id ? { ...o, ...updateData } : o));
+
+                        // 3. Aktualizacja w hooku useProductionData dla aktywnych zleceń (OrderCard, MissingWeightsView)
+                        props.onUpdateOrder?.(id, updateData);
+
+                        // 4. Aktualizacja aktualnie edytowanego zlecenia
+                        setEditingOrderElements(prev => prev && prev.id === id ? { ...prev, ...updateData } : prev);
+
+                        // 5. Trwały zapis do bazy Firestore
                         await updateDoc(doc(db, 'orders', id), updateData);
                       } catch (e) {
                         console.error('Błąd podczas zapisywania elementów:', e);

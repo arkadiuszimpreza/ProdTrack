@@ -124,9 +124,16 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
     return () => unsubscribe();
   }, [user]);
 
+  // Optymistyczna aktualizacja lokalnego stanu zleceń (natychmiastowe odświeżenie UI bez czekania na sieć)
+  const updateLocalOrder = (id: string, updateData: Partial<ProductionOrder>) => {
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updateData } : o));
+  };
+
   // Dyspozytor oddaje gotową teczkę z danymi do Dyrektora
   return {
     orders,
+    setOrders,
+    updateLocalOrder,
     employees,
     workStations,
     activeSessions,

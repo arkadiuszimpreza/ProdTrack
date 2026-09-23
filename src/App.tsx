@@ -62,7 +62,8 @@ export default function App() {
   // 2. Dyspozytor Danych (Nasz wydzielony Hook do odczytu)
   // Jeśli konto oczekuje na zatwierdzenie (pending), nie uruchamiamy subskrypcji danych produkcyjnych
   const { 
-    orders, employees, workStations, activeSessions, activeLog, setActiveLog, allActiveLogs, systemMetadata 
+    orders, employees, workStations, activeSessions, activeLog, setActiveLog, allActiveLogs, systemMetadata,
+    updateLocalOrder
   } = useProductionData(isPending ? null : user, isAdmin, currentOperator);
 
   // 3. Kierownik Zmiany (Nasz wydzielony Hook do operacji na czasie pracy)
@@ -350,6 +351,7 @@ export default function App() {
         importConflicts={importConflicts} setImportConflicts={setImportConflicts} pendingNewOrders={pendingNewOrders} setPendingNewOrders={setPendingNewOrders}
         showImportModal={showImportModal} setShowImportModal={setShowImportModal} isImporting={isImporting} importSummary={importSummary} onClearSummary={() => setImportSummary(null)}
         overrideRole={overrideRole} setOverrideRole={setOverrideRole}
+        onUpdateOrder={updateLocalOrder}
       />
       <KeyboardToggle />
       {showKeyboard && <VirtualKeyboard />}
