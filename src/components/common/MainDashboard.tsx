@@ -85,7 +85,6 @@ interface MainDashboardProps {
   onStartWork: (order: ProductionOrder, element?: OrderElement) => Promise<void>;
   onStopWork: (reports?: { orderId: string, quantity: number }[]) => Promise<void>;
   onDeleteOrder: (id: string) => Promise<void>;
-  onClearDatabase: () => Promise<void>;
   onExcelImport: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onConfirmImport: (selected: Set<number>) => Promise<void>;
   onAddEmployee: (data: any) => Promise<boolean>;

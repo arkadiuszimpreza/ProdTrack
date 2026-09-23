@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   collection, updateDoc, setDoc, doc, getDoc, 
-  deleteDoc, writeBatch, serverTimestamp, addDoc, getDocs, onSnapshot 
+  deleteDoc, writeBatch, serverTimestamp, addDoc, onSnapshot 
 } from 'firebase/firestore';
 import { 
   signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, 
@@ -193,21 +193,6 @@ export default function App() {
     try { await deleteDoc(doc(db, 'orders', orderId)); } catch (err) { handleFirestoreError(err, OperationType.DELETE, 'orders'); }
   };
 
-  const clearDatabase = async () => {
-    setIsImporting(true);
-    try {
-      const ordersSnap = await getDocs(collection(db, 'orders'));
-      const logsSnap = await getDocs(collection(db, 'workLogs'));
-      const allDocs = [...ordersSnap.docs, ...logsSnap.docs];
-      for (let i = 0; i < allDocs.length; i += 500) {
-        const batch = writeBatch(db);
-        allDocs.slice(i, i + 500).forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
-    } catch (err) { handleFirestoreError(err, OperationType.DELETE, 'db_clear'); }
-    finally { setIsImporting(false); }
-  };
-
   // --- FUNKCJE ADMINISTROWANIA BAZĄ ---
   const addEmployee = async (data: any) => {
     try { await addDoc(collection(db, 'employees'), { ...data, displayName: `${data.firstName} ${data.lastName}`, createdAt: serverTimestamp() }); return true; } 
@@ -343,7 +328,7 @@ export default function App() {
         workStations={workStations} activeSessions={activeSessions} activeLog={activeLog} allActiveLogs={allActiveLogs}
         currentOperator={currentOperator || employees.find(e => e.id === user?.uid) || null}
         onLogout={handleLogout} onStartWork={startWork} onStopWork={stopWork} onDeleteOrder={deleteOrder} 
-        onClearDatabase={clearDatabase} onExcelImport={handleExcelImport} onConfirmImport={confirmImport}
+        onExcelImport={handleExcelImport} onConfirmImport={confirmImport}
         onAddEmployee={addEmployee} onDeleteEmployee={deleteEmployee} onUpdateEmployee={updateEmployee} 
         onEmployeeImport={handleEmployeeImport} onClearEmployees={async () => true} 
         onAddStation={addWorkStation} onUpdateStation={updateWorkStation} onDeleteStation={deleteWorkStation}
