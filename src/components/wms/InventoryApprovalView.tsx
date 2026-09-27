@@ -3,7 +3,7 @@ import { collection, query, onSnapshot, orderBy, writeBatch, doc, serverTimestam
 import { db } from '../../firebase';
 import { ClipboardCheck, FileSpreadsheet, AlertTriangle, Calendar as CalendarIcon } from 'lucide-react';
 import { InventoryBatch, InventoryAdjustment, InventoryCount } from '../../types';
-import { generateTransactionNumber, buildTransactionData, getSequenceCounter } from '../../utils/wmsTransactionService';
+import { generateTransactionNumber, buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 
@@ -106,14 +106,35 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
     try {
       const todayStr = new Date().toISOString().split('T')[0];
 
+      let estimatedPWI = 0;
+      let estimatedRWI = 0;
+      for (const batch of draftsToApprove) {
+        let countedQty = batch.draftQuantity!;
+        const editedVal = approvalDraftEdits[batch.id as string];
+        if (editedVal !== undefined) {
+          const parsedEdit = parseFloat(editedVal.replace(',', '.'));
+          if (!isNaN(parsedEdit) && parsedEdit >= 0) {
+            countedQty = parsedEdit;
+          }
+        }
+        const diff = countedQty - (batch.numericQuantity || 0);
+        if (diff > 0) estimatedPWI++;
+        else if (diff < 0) estimatedRWI++;
+      }
+
+      const preReserved = await reserveTransactionNumbers({
+        PWI: estimatedPWI,
+        RWI: estimatedRWI
+      });
+
       await runTransaction(db, async (transaction) => {
         // Read all current quantities inside the transaction to avoid race condition
         const batchSnapshots = await Promise.all(
           draftsToApprove.map(batch => transaction.get(doc(db, 'inventoryBatches', batch.id as string)))
         );
 
-        // Odczyt licznika sekwencji PRZED JAKIMIKOLWIEK ZAPISAMI!
-        const seqCounter = await getSequenceCounter(db, transaction);
+        // Odczyt licznika sekwencji PRZED JAKIMIKOLWIEK ZAPISAMI (zautoryzowany z Cloud Function)
+        const seqCounter = await getSequenceCounter(db, transaction, preReserved);
 
         for (let idx = 0; idx < draftsToApprove.length; idx++) {
           const batch = draftsToApprove[idx];

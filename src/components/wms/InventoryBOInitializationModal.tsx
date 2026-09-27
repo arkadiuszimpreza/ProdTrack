@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { collection, getDocs, doc, runTransaction, serverTimestamp, query, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { InventoryBatch } from '../../types';
-import { getSequenceCounter, buildTransactionData } from '../../utils/wmsTransactionService';
+import { getSequenceCounter, buildTransactionData, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 import { Layers, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface Props {
@@ -56,10 +56,11 @@ export function InventoryBOInitializationModal({ onClose, onSuccess, currentUser
 
       for (let i = 0; i < activeBatches.length; i += CHUNK_SIZE) {
         const chunk = activeBatches.slice(i, i + CHUNK_SIZE);
+        const preReserved = await reserveTransactionNumbers({ BO: chunk.length });
 
         await runTransaction(db, async (transaction) => {
-          // 1. FAZA ODCZYTU: Licznik sekwencji
-          const seqCounter = await getSequenceCounter(db, transaction);
+          // 1. FAZA ODCZYTU: Licznik sekwencji (zautoryzowany z Cloud Function)
+          const seqCounter = await getSequenceCounter(db, transaction, preReserved);
 
           // 2. FAZA ZAPISU: Generowanie kwitów BO
           for (let j = 0; j < chunk.length; j++) {

@@ -4,7 +4,7 @@ import { db } from '../../firebase';
 import { Edit2, Trash2, X, Save, Search, History } from 'lucide-react';
 import { InventoryBatch } from '../../types';
 import { cn } from '../../utils/firestore-helpers';
-import { getSequenceCounter, buildTransactionData } from '../../utils/wmsTransactionService';
+import { getSequenceCounter, buildTransactionData, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 
 export function ManualReceiptsView() {
   const [batches, setBatches] = useState<InventoryBatch[]>([]);
@@ -117,6 +117,12 @@ export function ManualReceiptsView() {
       );
       const txSnap = await getDocs(txQ);
 
+      // Jeśli nie ma starego wpisu PZ, rezerwujemy numer z Cloud Function
+      let preReserved: Record<string, string[]> | undefined;
+      if (txSnap.empty) {
+        preReserved = await reserveTransactionNumbers({ PZ: 1 });
+      }
+
       await runTransaction(db, async (transaction) => {
         const batchRef = doc(db, 'inventoryBatches', editingBatch.id!);
         let poRef = null;
@@ -146,7 +152,7 @@ export function ManualReceiptsView() {
           });
         } else {
           // Brak starego wpisu PZ -> generujemy nowy wpis kwitu PZ
-          const seqCounter = await getSequenceCounter(db, transaction);
+          const seqCounter = await getSequenceCounter(db, transaction, preReserved);
           const txNumber = seqCounter.getNextNumber('PZ');
           seqCounter.commit(transaction);
 

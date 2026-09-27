@@ -3,7 +3,7 @@ import { collection, query, onSnapshot, orderBy, doc, serverTimestamp, runTransa
 import { db } from '../../firebase';
 import { Search, RotateCcw, FileSpreadsheet, User, ClipboardList, X, PackageMinus } from 'lucide-react';
 import { InventoryBatch, MaterialWithdrawal } from '../../types';
-import { generateTransactionNumber, buildTransactionData, getSequenceCounter } from '../../utils/wmsTransactionService';
+import { generateTransactionNumber, buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 
@@ -182,6 +182,9 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
     try {
       const todayStr = new Date().toISOString().split('T')[0];
 
+      // Rezerwacja numeru PW z Cloud Function
+      const preReserved = await reserveTransactionNumbers({ PW: 1 });
+
       await runTransaction(db, async (transaction) => {
         const withdrawalRef = doc(db, 'materialWithdrawals', returnModalItem.id as string);
         const withdrawalSnap = await transaction.get(withdrawalRef);
@@ -208,8 +211,8 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
           }
         }
 
-        // Odczyt licznika sekwencji transakcji W FAZIE READ (przed jakimikolwiek zapisami!)
-        const seqCounter = await getSequenceCounter(db, transaction);
+        // Odczyt licznika sekwencji transakcji W FAZIE READ (zautoryzowany z Cloud Function)
+        const seqCounter = await getSequenceCounter(db, transaction, preReserved);
 
         const newReturnRef = doc(collection(db, 'materialWithdrawals'));
         const returnData: MaterialWithdrawal = {

@@ -1,10 +1,13 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getFunctions } from 'firebase/functions';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+export const functions = getFunctions(app, 'europe-west1');
+
 
 // Jeśli identyfikator bazy to stary ID z AI Studio, używamy domyślnej bazy (default)
 const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId.startsWith('ai-studio-')) 

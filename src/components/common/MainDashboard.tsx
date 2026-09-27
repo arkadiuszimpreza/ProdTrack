@@ -18,7 +18,7 @@ import {
 import { cn } from '../../utils/firestore-helpers';
 import { parseSearchTerms, matchesAllTerms } from '../../utils/search';
 import { calculateOrderStatus } from '../../utils/orderStatus';
-import { generateTransactionNumber, buildTransactionData, getSequenceCounter } from '../../utils/wmsTransactionService';
+import { generateTransactionNumber, buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 
 // Components
 import { ActiveTimer } from '../production/ActiveTimer';
@@ -306,9 +306,12 @@ export function MainDashboard(props: MainDashboardProps) {
         createdBy: 'Magazynier (Ręcznie)'
       };
 
+      // Rezerwacja numeru PZ z Cloud Function
+      const preReserved = await reserveTransactionNumbers({ PZ: 1 });
+
       await runTransaction(db, async (transaction) => {
-        // Pobranie licznika sekwencji dla kwitów WMS ERP
-        const seqCounter = await getSequenceCounter(db, transaction);
+        // Pobranie licznika sekwencji dla kwitów WMS ERP (zautoryzowany z Cloud Function)
+        const seqCounter = await getSequenceCounter(db, transaction, preReserved);
         const txNumber = seqCounter.getNextNumber('PZ');
         seqCounter.commit(transaction);
 

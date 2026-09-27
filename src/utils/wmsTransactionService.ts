@@ -1,9 +1,68 @@
 import { doc, collection, serverTimestamp, Transaction, WriteBatch, Firestore } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../firebase';
 import { InventoryTransaction, InventoryTransactionType } from '../types';
 
 /**
+ * Pobiera pulę unikalnych numerów transakcji WMS z Cloud Function działającej w chmurze GCP.
+ * Używa Firebase Admin SDK po stronie backendu, gwarantując atomowość i brak konieczności
+ * dawania uprawnień zapisu do system_configs na frontendzie.
+ */
+export const fetchSequenceNumbersFromCloud = async (
+  type: InventoryTransactionType,
+  count: number = 1
+): Promise<string[]> => {
+  try {
+    const getNextWmsSequenceCallable = httpsCallable<
+      { type: InventoryTransactionType; count: number },
+      { numbers: string[]; nextNumber: string; count: number; sequenceKey: string }
+    >(functions, 'getNextWmsSequence');
+
+    const result = await getNextWmsSequenceCallable({ type, count });
+    if (result.data && Array.isArray(result.data.numbers) && result.data.numbers.length > 0) {
+      return result.data.numbers;
+    }
+    throw new Error('Pusta odpowiedź z Cloud Function getNextWmsSequence');
+  } catch (error: any) {
+    console.warn(
+      `[WMS Sequence] Cloud Function niedostępna (${error?.code || error?.message}). Używam transakcyjnego mechanizmu zapasowego Firestore.`,
+      error
+    );
+    throw error;
+  }
+};
+
+/**
+ * Pobiera pulę numerów z Cloud Function dla zadanego typu (lub mapy typów z liczbą potrzebnych numerów)
+ * z bezpiecznym fallbackiem (w razie błędu sieci zwraca pusty obiekt, co pozwala transakcji użyć fallbacku Firestore).
+ */
+export const reserveTransactionNumbers = async (
+  requests: Partial<Record<InventoryTransactionType, number>>
+): Promise<Record<string, string[]>> => {
+  const result: Record<string, string[]> = {};
+  await Promise.all(
+    Object.entries(requests).map(async ([typeStr, count]) => {
+      const type = typeStr as InventoryTransactionType;
+      if (!count || count <= 0) return;
+      try {
+        const numbers = await fetchSequenceNumbersFromCloud(type, count);
+        if (numbers && numbers.length > 0) {
+          result[type] = numbers;
+        }
+      } catch (err) {
+        console.warn(
+          `[WMS] Nie udało się zarezerwować puli numerów dla ${type} z Cloud Function. Używam transakcyjnego fallbacku Firestore.`,
+          err
+        );
+      }
+    })
+  );
+  return result;
+};
+
+/**
  * Klasa zarządzająca sekwencjami numerów dokumentów wewnątrz pojedynczej transakcji Firestore.
- * Gwarantuje, że odczyt licznika odbywa się w fazie ODCZYTU (READ), a modyfikacje w fazie ZAPISU (WRITE).
+ * Obsługuje zarówno numery zautoryzowane z Cloud Function, jak i lokalny fallback transakcyjny.
  */
 export class SequenceCounter {
   private data: Record<string, number>;
@@ -11,16 +70,32 @@ export class SequenceCounter {
   private year: number;
   private month: string;
   private pendingUpdates: Record<string, number> = {};
+  private preReservedNumbers: Record<string, string[]> = {};
+  private isCloudReserved: boolean = false;
 
-  constructor(counterRef: any, initialData: Record<string, number> = {}) {
+  constructor(
+    counterRef: any,
+    initialData: Record<string, number> = {},
+    preReservedNumbers?: Record<string, string[]>
+  ) {
     this.counterRef = counterRef;
     this.data = { ...initialData };
     const now = new Date();
     this.year = now.getFullYear();
     this.month = String(now.getMonth() + 1).padStart(2, '0');
+    if (preReservedNumbers && Object.keys(preReservedNumbers).length > 0) {
+      this.preReservedNumbers = { ...preReservedNumbers };
+      this.isCloudReserved = true;
+    }
   }
 
   getNextNumber(type: InventoryTransactionType): string {
+    // 1. Jeśli posiadamy numery zarezerwowane z Cloud Function, pobieramy je z bufora
+    if (this.preReservedNumbers[type] && this.preReservedNumbers[type].length > 0) {
+      return this.preReservedNumbers[type].shift()!;
+    }
+
+    // 2. Mechanizm zapasowy (fallback): transakcyjna sekwencja lokalna Firestore
     const sequenceKey = `${type}_${this.year}_${this.month}`;
     const currentVal = this.pendingUpdates[sequenceKey] ?? this.data[sequenceKey] ?? 0;
     const nextVal = currentVal + 1;
@@ -31,7 +106,14 @@ export class SequenceCounter {
   }
 
   commit(transaction: Transaction) {
-    if (Object.keys(this.pendingUpdates).length > 0) {
+    // Jeśli numeracja została zaalokowana przez Cloud Function,
+    // licznik w chmurze został już zaktualizowany na serwerze.
+    // Nie wykonujemy zbędnego (i potencjalnie zablokowanego regułami) zapisu do system_configs!
+    if (this.isCloudReserved && Object.keys(this.pendingUpdates).length === 0) {
+      return;
+    }
+
+    if (Object.keys(this.pendingUpdates).length > 0 && this.counterRef) {
       transaction.set(this.counterRef, this.pendingUpdates, { merge: true });
     }
   }
@@ -39,11 +121,17 @@ export class SequenceCounter {
 
 /**
  * Pobiera licznik sekwencji w fazie ODCZYTU transakcji (przed wszelkimi zapisami).
+ * Jeśli przekazano preReservedNumbers z Cloud Function, pomija fizyczny odczyt system_configs.
  */
 export const getSequenceCounter = async (
   db: Firestore,
-  transaction: Transaction
+  transaction: Transaction,
+  preReserved?: Record<string, string[]>
 ): Promise<SequenceCounter> => {
+  if (preReserved && Object.keys(preReserved).length > 0) {
+    return new SequenceCounter(null, {}, preReserved);
+  }
+
   const counterRef = doc(db, 'system_configs', 'wms_transaction_sequences');
   const counterSnap = await transaction.get(counterRef);
   const data = counterSnap.exists() ? (counterSnap.data() as Record<string, number>) : {};
@@ -70,13 +158,25 @@ export const getTransactionSign = (type: InventoryTransactionType): 1 | -1 => {
 
 /**
  * Generuje unikalny numer transakcji magazynowej ERP, np. "PZ/2026/07/0001".
- * UWAGA: Jeśli używasz transakcji Firestore, użyj getSequenceCounter(db, transaction) w fazie ODCZYTU!
+ * Priorytetowo odpytuje Cloud Function; w razie błędu sieci/braku deploymentu używa fallbacku.
  */
 export const generateTransactionNumber = async (
   db: Firestore,
   type: InventoryTransactionType,
   transaction?: Transaction
 ): Promise<string> => {
+  // 1. Jeśli operacja nie wymaga zewnętrznej transakcji lub jest poza nią, najpierw pytamy Cloud Function
+  if (!transaction) {
+    try {
+      const cloudNumbers = await fetchSequenceNumbersFromCloud(type, 1);
+      if (cloudNumbers && cloudNumbers[0]) {
+        return cloudNumbers[0];
+      }
+    } catch {
+      // przechodzimy do awaryjnego fallbacku
+    }
+  }
+
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -101,6 +201,7 @@ export const generateTransactionNumber = async (
   const seqString = String(nextVal).padStart(4, '0');
   return `${type}/${year}/${month}/${seqString}`;
 };
+
 
 export interface CreateTransactionParams {
   type: InventoryTransactionType;
@@ -192,6 +293,17 @@ export const executeOrderMaterialWithdrawalTx = async (
 ): Promise<{ withdrawalId: string; transactionNumber: string }> => {
   const { runTransaction } = await import('firebase/firestore');
 
+  // Próba pobrania numeru RW z Cloud Function przed rozpoczęciem transakcji
+  let preReserved: Record<string, string[]> | undefined = undefined;
+  try {
+    const cloudNumbers = await fetchSequenceNumbersFromCloud('RW', 1);
+    if (cloudNumbers && cloudNumbers.length > 0) {
+      preReserved = { RW: cloudNumbers };
+    }
+  } catch {
+    // Fallback: pobranie i inkrementacja wewnątrz transakcji Firestore
+  }
+
   return await runTransaction(db, async (transaction) => {
     // 1. FAZA ODCZYTU (READ PHASE) - WSZYSTKIE ODCZYTY PIERWSZE
     const batchRef = doc(db, 'inventoryBatches', params.batchId);
@@ -210,8 +322,8 @@ export const executeOrderMaterialWithdrawalTx = async (
       );
     }
 
-    // Odczyt licznika sekwencji przed jakimikolwiek zapisami
-    const seqCounter = await getSequenceCounter(db, transaction);
+    // Odczyt licznika sekwencji przed jakimikolwiek zapisami (uwzględnia numery z Cloud Function)
+    const seqCounter = await getSequenceCounter(db, transaction, preReserved);
 
     // 2. FAZA ZAPISU (WRITE PHASE) - ZAPISY PO ODCZYTACH
     const txNumber = seqCounter.getNextNumber('RW');

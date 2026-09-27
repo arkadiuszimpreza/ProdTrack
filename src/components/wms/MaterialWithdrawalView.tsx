@@ -3,7 +3,7 @@ import { collection, query, onSnapshot, orderBy, writeBatch, doc, serverTimestam
 import { db } from '../../firebase';
 import { Search, PackageMinus, FileSpreadsheet, User, ClipboardList, ChevronRight, ChevronLeft, X, Box, CheckCircle, Calendar as CalendarIcon, Lock } from 'lucide-react';
 import { InventoryBatch, MaterialWithdrawal } from '../../types';
-import { generateTransactionNumber, buildTransactionData, getSequenceCounter } from '../../utils/wmsTransactionService';
+import { generateTransactionNumber, buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
 import { compareMaterialNames } from "../../utils/materialUtils";
 import { cn } from '../../utils/firestore-helpers';
@@ -302,6 +302,18 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik', i
     try {
       const todayStr = new Date().toISOString().split('T')[0];
 
+      const validEntries = Object.entries(withdrawalQuantities).filter(([, rawQty]) => {
+        const q = parseFloat(String(rawQty).replace(',', '.'));
+        return !isNaN(q) && q > 0;
+      });
+      if (validEntries.length === 0) {
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Rezerwacja unikalnych numerów RW z Cloud Function przed rozpoczęciem transakcji
+      const preReserved = await reserveTransactionNumbers({ RW: validEntries.length });
+
       await runTransaction(db, async (transaction) => {
         const reads = [];
         for (const [batchId, rawQtyToTake] of Object.entries(withdrawalQuantities)) {
@@ -313,8 +325,8 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik', i
         
         const snaps = await Promise.all(reads);
         
-        // ODCZYT LICZNIKA SEKWENCJI PRZED JAKIMIKOLWIEK ZAPISAMI
-        const seqCounter = await getSequenceCounter(db, transaction);
+        // ODCZYT LICZNIKA SEKWENCJI PRZED JAKIMIKOLWIEK ZAPISAMI (zautoryzowany z Cloud Function)
+        const seqCounter = await getSequenceCounter(db, transaction, preReserved);
 
         for (const { snap, qtyToTake, batchId } of snaps) {
           if (!snap.exists()) {

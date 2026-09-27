@@ -5,7 +5,7 @@ import { Archive, Search, AlertCircle, Save, CheckCircle } from 'lucide-react';
 import { InventoryBatch, InventoryCount } from '../../types';
 import { compareMaterialNames } from "../../utils/materialUtils";
 import { cn } from '../../utils/firestore-helpers';
-import { getSequenceCounter, buildTransactionData } from '../../utils/wmsTransactionService';
+import { getSequenceCounter, buildTransactionData, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 
 type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'PL' | 'FA' | 'SR' | 'INNE';
 
@@ -123,13 +123,16 @@ export function InventoryZeroingView({ currentUser }: Props) {
       }
 
       for (const chunk of chunks) {
+        const rwiCount = chunk.filter(b => (b.numericQuantity || 0) > 0).length;
+        const preReserved = await reserveTransactionNumbers({ RWI: rwiCount });
+
         await runTransaction(db, async (transaction) => {
           // Pobranie aktualnych danych wsadów
           const batchSnapshots = await Promise.all(
             chunk.map(batch => transaction.get(doc(db, 'inventoryBatches', batch.id as string)))
           );
 
-          const seqCounter = await getSequenceCounter(db, transaction);
+          const seqCounter = await getSequenceCounter(db, transaction, preReserved);
           const todayStr = new Date().toISOString().split('T')[0];
 
           for (let i = 0; i < chunk.length; i++) {
