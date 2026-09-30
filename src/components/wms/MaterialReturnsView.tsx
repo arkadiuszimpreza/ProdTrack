@@ -3,7 +3,7 @@ import { collection, query, onSnapshot, orderBy, doc, serverTimestamp, runTransa
 import { db } from '../../firebase';
 import { Search, RotateCcw, FileSpreadsheet, User, ClipboardList, X, PackageMinus } from 'lucide-react';
 import { InventoryBatch, MaterialWithdrawal } from '../../types';
-import { generateTransactionNumber, buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
+import { buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 

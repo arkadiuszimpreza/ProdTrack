@@ -38,9 +38,33 @@ export const getNextWmsSequence = onCall<GetNextSequenceRequest, Promise<GetNext
       );
     }
 
+    // 2. Weryfikacja uprawnień (RBAC) w Firestore dokument users/{uid}
+    const callerUid = request.auth.uid;
+    const userDocSnap = await db.collection("users").doc(callerUid).get();
+    if (!userDocSnap.exists) {
+      throw new HttpsError(
+        "permission-denied",
+        "Profil użytkownika nie został odnaleziony w systemie."
+      );
+    }
+
+    const userData = userDocSnap.data();
+    const userRole = userData?.role;
+    const callerEmail = request.auth.token.email;
+
+    const allowedWmsRoles = ['admin', 'magazynier', 'operator-wms'];
+    const isSpecialAdmin = callerEmail === 'arkadiusz.biesiada@erplast.pl';
+
+    if (!allowedWmsRoles.includes(userRole) && !isSpecialAdmin) {
+      throw new HttpsError(
+        "permission-denied",
+        "Brak uprawnień. Generowanie numerów dokumentów WMS wymaga roli magazynowej lub administratora."
+      );
+    }
+
     const { type, count = 1 } = request.data;
 
-    // 2. Walidacja danych wejściowych
+    // 3. Walidacja danych wejściowych
     const validTypes: InventoryTransactionType[] = ['PZ', 'RW', 'PW', 'RWI', 'PWI', 'BO'];
     if (!type || !validTypes.includes(type)) {
       throw new HttpsError(
@@ -51,7 +75,7 @@ export const getNextWmsSequence = onCall<GetNextSequenceRequest, Promise<GetNext
 
     const requestedCount = Math.max(1, Math.min(Math.floor(count), 500));
 
-    // 3. Autorytatywny czas serwera
+    // 4. Autorytatywny czas serwera
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -60,7 +84,7 @@ export const getNextWmsSequence = onCall<GetNextSequenceRequest, Promise<GetNext
     const counterRef = db.collection('system_configs').doc('wms_transaction_sequences');
 
     try {
-      // 4. Atomowa transakcja Firestore po stronie serwera
+      // 5. Atomowa transakcja Firestore po stronie serwera
       const generatedNumbers = await db.runTransaction(async (transaction: Transaction) => {
         const counterSnap = await transaction.get(counterRef);
         const data = counterSnap.exists ? (counterSnap.data() as Record<string, number>) : {};
@@ -96,12 +120,13 @@ export const getNextWmsSequence = onCall<GetNextSequenceRequest, Promise<GetNext
         count: generatedNumbers.length,
         sequenceKey
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as { message?: string };
       console.error("Błąd podczas generowania sekwencji WMS w Cloud Function:", error);
       throw new HttpsError(
         "internal",
         "Wystąpił błąd serwera podczas generowania numeru dokumentu WMS.",
-        error?.message
+        err?.message
       );
     }
   }

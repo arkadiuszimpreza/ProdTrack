@@ -18,7 +18,7 @@ import {
 import { cn } from '../../utils/firestore-helpers';
 import { parseSearchTerms, matchesAllTerms } from '../../utils/search';
 import { calculateOrderStatus } from '../../utils/orderStatus';
-import { generateTransactionNumber, buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
+import { buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 
 // Components
 import { ActiveTimer } from '../production/ActiveTimer';

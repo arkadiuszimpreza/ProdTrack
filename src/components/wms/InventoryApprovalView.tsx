@@ -3,7 +3,7 @@ import { collection, query, onSnapshot, orderBy, writeBatch, doc, serverTimestam
 import { db } from '../../firebase';
 import { ClipboardCheck, FileSpreadsheet, AlertTriangle, Calendar as CalendarIcon } from 'lucide-react';
 import { InventoryBatch, InventoryAdjustment, InventoryCount } from '../../types';
-import { generateTransactionNumber, buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
+import { buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 

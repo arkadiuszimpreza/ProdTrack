@@ -1,4 +1,4 @@
-import { doc, collection, serverTimestamp, Transaction, WriteBatch, Firestore } from 'firebase/firestore';
+import { doc, collection, serverTimestamp, Transaction, WriteBatch, Firestore, DocumentReference } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 import { InventoryTransaction, InventoryTransactionType } from '../types';
@@ -23,9 +23,10 @@ export const fetchSequenceNumbersFromCloud = async (
       return result.data.numbers;
     }
     throw new Error('Pusta odpowiedź z Cloud Function getNextWmsSequence');
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { code?: string; message?: string };
     console.warn(
-      `[WMS Sequence] Cloud Function niedostępna (${error?.code || error?.message}). Używam transakcyjnego mechanizmu zapasowego Firestore.`,
+      `[WMS Sequence] Cloud Function niedostępna (${err?.code || err?.message}). Używam transakcyjnego mechanizmu zapasowego Firestore.`,
       error
     );
     throw error;
@@ -66,7 +67,7 @@ export const reserveTransactionNumbers = async (
  */
 export class SequenceCounter {
   private data: Record<string, number>;
-  private counterRef: any;
+  private counterRef: DocumentReference | null;
   private year: number;
   private month: string;
   private pendingUpdates: Record<string, number> = {};
@@ -74,7 +75,7 @@ export class SequenceCounter {
   private isCloudReserved: boolean = false;
 
   constructor(
-    counterRef: any,
+    counterRef: DocumentReference | null,
     initialData: Record<string, number> = {},
     preReservedNumbers?: Record<string, string[]>
   ) {
@@ -155,53 +156,6 @@ export const getTransactionSign = (type: InventoryTransactionType): 1 | -1 => {
       return 1;
   }
 };
-
-/**
- * Generuje unikalny numer transakcji magazynowej ERP, np. "PZ/2026/07/0001".
- * Priorytetowo odpytuje Cloud Function; w razie błędu sieci/braku deploymentu używa fallbacku.
- */
-export const generateTransactionNumber = async (
-  db: Firestore,
-  type: InventoryTransactionType,
-  transaction?: Transaction
-): Promise<string> => {
-  // 1. Jeśli operacja nie wymaga zewnętrznej transakcji lub jest poza nią, najpierw pytamy Cloud Function
-  if (!transaction) {
-    try {
-      const cloudNumbers = await fetchSequenceNumbersFromCloud(type, 1);
-      if (cloudNumbers && cloudNumbers[0]) {
-        return cloudNumbers[0];
-      }
-    } catch {
-      // przechodzimy do awaryjnego fallbacku
-    }
-  }
-
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const sequenceKey = `${type}_${year}_${month}`;
-
-  const counterRef = doc(db, 'system_configs', 'wms_transaction_sequences');
-
-  let nextVal = 1;
-
-  if (transaction) {
-    const counterSnap = await transaction.get(counterRef);
-    if (counterSnap.exists() && counterSnap.data()[sequenceKey] !== undefined) {
-      nextVal = counterSnap.data()[sequenceKey] + 1;
-    }
-    transaction.set(counterRef, { [sequenceKey]: nextVal }, { merge: true });
-  } else {
-    // Generowanie bez zewnętrznej transakcji (awaryjnie z losowym sufiksem)
-    const randomSuffix = Math.floor(Math.random() * 9000 + 1000);
-    return `${type}/${year}/${month}/${randomSuffix}`;
-  }
-
-  const seqString = String(nextVal).padStart(4, '0');
-  return `${type}/${year}/${month}/${seqString}`;
-};
-
 
 export interface CreateTransactionParams {
   type: InventoryTransactionType;
