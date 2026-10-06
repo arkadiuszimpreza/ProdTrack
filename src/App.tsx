@@ -166,22 +166,38 @@ export default function App() {
     try {
       const now = serverTimestamp();
       const userIdentifier = user?.displayName || user?.email || 'System';
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'system', 'metadata'), { lastOrderImportAt: now, lastOrderImportBy: userIdentifier }, { merge: true });
+
+      // Zbieramy wszystkie operacje zapisu, aby podzielić je na bezpieczne paczki (max 400 operacji na batch)
+      const operations: Array<(b: ReturnType<typeof writeBatch>) => void> = [];
+
+      operations.push(b => {
+        b.set(doc(db, 'system', 'metadata'), { lastOrderImportAt: now, lastOrderImportBy: userIdentifier }, { merge: true });
+      });
 
       pendingNewOrders.forEach(orderData => {
         const newDocRef = doc(collection(db, 'orders'));
-        batch.set(newDocRef, { ...orderData, createdAt: now, importedAt: now, lastModifiedAt: now, lastModifiedBy: userIdentifier });
+        operations.push(b => {
+          b.set(newDocRef, { ...orderData, createdAt: now, importedAt: now, lastModifiedAt: now, lastModifiedBy: userIdentifier });
+        });
       });
 
       const conflictsToUpdate = importConflicts.filter((_, idx) => selectedConflicts.has(idx));
       conflictsToUpdate.forEach(conflict => {
-        const updateData: any = { lastModifiedAt: now, lastModifiedBy: userIdentifier };
+        const updateData: Record<string, unknown> = { lastModifiedAt: now, lastModifiedBy: userIdentifier };
         conflict.diff.forEach(d => { updateData[d.field] = d.newValue; });
-        batch.update(doc(db, 'orders', conflict.existingOrder.id), updateData);
+        operations.push(b => {
+          b.update(doc(db, 'orders', conflict.existingOrder.id), updateData);
+        });
       });
 
-      await batch.commit();
+      const BATCH_SIZE = 400;
+      for (let i = 0; i < operations.length; i += BATCH_SIZE) {
+        const currentBatch = writeBatch(db);
+        const chunk = operations.slice(i, i + BATCH_SIZE);
+        chunk.forEach(op => op(currentBatch));
+        await currentBatch.commit();
+      }
+
       setShowImportModal(false);
       setPendingNewOrders([]);
       setImportConflicts([]);

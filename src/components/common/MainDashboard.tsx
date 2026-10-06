@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Package, Clock, Search, X, Trash2, Upload, List, AlertTriangle, 
   CheckCircle2, LogOut, Info, Settings, Settings2, LayoutList, Boxes, History, 
@@ -152,27 +152,35 @@ export function MainDashboard(props: MainDashboardProps) {
     }
   }, [props.overrideRole, props.profile?.role]);
 
-  // Pobieranie wszystkich zleceń z bazy, gdy wejdziemy w widok analityczny
+  // Pobieranie wszystkich zleceń z bazy (lub wymuszenie odświeżenia po imporcie)
+  const fetchAllAnalyticalOrders = useCallback(async () => {
+    setIsFetchingAnalytical(true);
+    try {
+      const q = query(collection(db, 'orders'));
+      const snap = await getDocs(q);
+      const all = snap.docs.map(doc => ({ ...doc.data(), id: doc.id })) as ProductionOrder[];
+      setAnalyticalOrders(all);
+    } catch (error) {
+      console.error("Błąd pobierania wszystkich zleceń dla analityki:", error);
+    } finally {
+      setIsFetchingAnalytical(false);
+    }
+  }, []);
+
   useEffect(() => {
     const isAnalyticalView = ['tonnage-stats', 'element-stats', 'reports', 'timeline', 'orders-overview'].includes(view);
-    
     if (isAnalyticalView && !analyticalOrders && !isFetchingAnalytical) {
-      setIsFetchingAnalytical(true);
-      const fetchAllOrders = async () => {
-        try {
-          const q = query(collection(db, 'orders'));
-          const snap = await getDocs(q);
-          const all = snap.docs.map(doc => ({ ...doc.data(), id: doc.id })) as ProductionOrder[];
-          setAnalyticalOrders(all);
-        } catch (error) {
-          console.error("Błąd pobierania wszystkich zleceń dla analityki:", error);
-        } finally {
-          setIsFetchingAnalytical(false);
-        }
-      };
-      fetchAllOrders();
+      fetchAllAnalyticalOrders();
     }
-  }, [view, analyticalOrders, isFetchingAnalytical]);
+  }, [view, analyticalOrders, isFetchingAnalytical, fetchAllAnalyticalOrders]);
+
+  // Automatyczne odświeżenie danych analitycznych po wykonaniu importu w systemie
+  const lastImportTimestamp = props.systemMetadata?.lastOrderImportAt?.seconds;
+  useEffect(() => {
+    if (lastImportTimestamp) {
+      fetchAllAnalyticalOrders();
+    }
+  }, [lastImportTimestamp, fetchAllAnalyticalOrders]);
 
   const ordersForAnalyticalViews = analyticalOrders || props.orders;
 
@@ -745,7 +753,16 @@ export function MainDashboard(props: MainDashboardProps) {
               ) : view === 'missing-weights' ? (
                 <MissingWeightsView orders={props.orders} onEditElements={setEditingOrderElements} />
               ) : view === 'orders-overview' && props.isAdmin ? (
-                <OrdersOverviewView orders={ordersForAnalyticalViews} />
+                <OrdersOverviewView 
+                  orders={ordersForAnalyticalViews} 
+                  onRefresh={fetchAllAnalyticalOrders}
+                  isRefreshing={isFetchingAnalytical}
+                  onExcelImport={props.onExcelImport}
+                  isImporting={props.isImporting}
+                  isAdmin={props.isAdmin}
+                  lastImportAt={props.systemMetadata?.lastOrderImportAt}
+                  lastImportBy={props.systemMetadata?.lastOrderImportBy}
+                />
               ) : view === 'manual-entry' && props.isAdmin ? (
                 <div className="space-y-6">
                   <div className="flex justify-center">

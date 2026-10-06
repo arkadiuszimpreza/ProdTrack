@@ -52,6 +52,39 @@ const determineAssortmentCategory = (productName: string, articleNumber: string)
   return 'Inne';
 };
 
+// --- POMOCNIK NORMALIZACJI KOLUMN EXCELA (RADAR SYNOCNIMÓW) ---
+const normalizeColKey = (key: string) => key.replace(/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/g, '').toLowerCase();
+
+const getRowVal = (row: any, searchKeys: string[]): string => {
+  if (!row || typeof row !== 'object') return '';
+  const rowKeys = Object.keys(row);
+  for (const sk of searchKeys) {
+    const target = normalizeColKey(sk);
+    const foundKey = rowKeys.find(k => normalizeColKey(k) === target);
+    if (foundKey !== undefined) {
+      const val = row[foundKey];
+      if (val !== null && val !== undefined) {
+        const strVal = String(val).trim();
+        if (strVal !== '' && strVal !== '-') {
+          return strVal;
+        }
+      }
+    }
+  }
+  return '';
+};
+
+const getRowNumber = (row: any, searchKeys: string[]): number => {
+  const valStr = getRowVal(row, searchKeys);
+  if (!valStr) return 0;
+  let clean = valStr.replace(/[\s\u00A0]/g, '');
+  if (clean.includes(',')) {
+    clean = clean.replace(/\./g, '').replace(',', '.');
+  }
+  const parsed = parseFloat(clean);
+  return isNaN(parsed) ? 0 : parsed;
+};
+
 // --- MASZYNA 1: Parsowanie Zleceń Produkcyjnych ---
 export const parseOrdersExcel = (
   file: File, 
@@ -70,9 +103,9 @@ export const parseOrdersExcel = (
 
         // --- SMART CHUNK QUERYING ---
         
-        // 1. Zbieramy numery zleceń z wgrywanego pliku Excel i OD RAZU JE CZYŚCIMY
+        // 1. Zbieramy numery zleceń z wgrywanego pliku Excel i OD RAZU JE CZYŚCIMY (z elastycznym dopasowaniem nagłówka)
         const excelOrderNumbers = [...new Set(json.map(row => {
-          return String(row['ZP-nr'] || row['Zlecenie'] || row['Nr ZP'] || row['ZP'] || '').trim();
+          return getRowVal(row, ['ZP-nr', 'ZP nr', 'Zlecenie', 'Nr ZP', 'ZP', 'Zlecenie produkcyjne', 'Nr zlecenia produkcyjnego']);
         }).filter(Boolean))];
 
         // 2. Filtrujemy te, których NIE MA lokalnie (aktywnych)
@@ -105,27 +138,26 @@ export const parseOrdersExcel = (
         const newOrders: Omit<ProductionOrder, 'id' | 'createdAt'>[] = [];
         const conflicts: ImportConflict[] = [];
 
-        // ORYGINALNY KOD PARSERA (Z DODANĄ SANITYZACJĄ .trim())
+        // PANCERNY PARSER WIERSZY Z ODPORNOŚCIĄ NA BIAŁE ZNAKI I RÓŻNE WARIANTY NAGŁÓWKÓW
         for (const row of json) {
           // Czyszczenie kluczowych numerów identyfikacyjnych
-          const orderNumber = String(row['ZP-nr'] || row['Zlecenie'] || row['Nr ZP'] || row['ZP'] || '').trim();
+          const orderNumber = getRowVal(row, ['ZP-nr', 'ZP nr', 'Zlecenie', 'Nr ZP', 'ZP', 'Zlecenie produkcyjne', 'Nr zlecenia produkcyjnego']);
           if (!orderNumber) continue;
 
-          const erpOrderNumber = String(row['Zlecenie-nr'] || row['Nr zlecenia'] || row['Zlecenie nr'] || row['Nr Zlecenia'] || '').trim();
-          const projectNumber = String(row['Projekt-nr'] || '').trim();
+          const erpOrderNumber = getRowVal(row, ['Zlecenie-nr', 'Zlecenie nr', 'Nr zlecenia', 'Zlecenie', 'Nr Zlecenia']);
+          const projectNumber = getRowVal(row, ['Projekt-nr', 'Projekt nr', 'Projekt', 'Nr projektu']);
           
-          // Profilaktyczne czyszczenie tekstów (pomaga uniknąć problemów z UI i filtrami)
-          const productName = String(row['Nazwa'] || row['Produkt'] || '').trim();
-          const articleNumber = String(row['Artykuł-nr'] || '').trim();
-          const clientName = String(row['Nazwa_1'] || row['Klient-nr'] || '').trim();
-          const priority = String(row['Prio.'] || '').trim();
-          const unit = String(row['JM'] || '').trim();
+          const productName = getRowVal(row, ['Nazwa', 'Produkt', 'Nazwa produktu', 'Wyrób', 'Nazwa wyrobu']);
+          const articleNumber = getRowVal(row, ['Artykuł-nr', 'Artykul-nr', 'Artykuł nr', 'Indeks', 'Kod towaru', 'Artykuł']);
+          const clientName = getRowVal(row, ['Nazwa_1', 'Klient-nr', 'Klient', 'Nazwa klienta', 'Odbiorca']);
+          const priority = getRowVal(row, ['Prio.', 'Prio', 'Priorytet']);
+          const unit = getRowVal(row, ['JM', 'Jednostka', 'Jedn.']);
           
-          const erpStatus = String(row['Status'] || '').trim();
-          const positionNumber = String(row['Poz.-nr'] || '').trim();
+          const erpStatus = getRowVal(row, ['Status', 'Status ERP', 'Status zlecenia', 'Status ZP', 'Stan', 'StatusERP']);
+          const positionNumber = getRowVal(row, ['Poz.-nr', 'Poz-nr', 'Poz. nr', 'Poz.nr', 'Pozycja', 'Poz', 'Pozycja-nr', 'Nr pozycji', 'PozNr']);
 
-          const targetQuantity = Number(row['Ilość (plan.)'] || row['Ilość'] || 0);
-          const erpQtyFromExcel = Number(row['Ilość (rzecz.)'] || 0);
+          const targetQuantity = getRowNumber(row, ['Ilość (plan.)', 'Ilość plan.', 'Ilość planowana', 'Ilość', 'Ilosc planowana', 'Ilosc']);
+          const erpQtyFromExcel = getRowNumber(row, ['Ilość (rzecz.)', 'Ilość rzecz.', 'Ilość rzeczywista', 'Ilość wykonana', 'Ilość wyk.', 'Ilosc rzecz', 'Ilość wykon.']);
 
           const initialStatus = calculateOrderStatus(erpQtyFromExcel, 0, targetQuantity);
           
@@ -172,11 +204,11 @@ export const parseOrdersExcel = (
               diff.push({ field: 'erpOrderNumber', label: 'Nr Zlecenia ERP', oldValue: existing.erpOrderNumber, newValue: erpOrderNumber });
             }
             
-            // Sprawdzanie nowych pól
-            if (erpStatus && existing.erpStatus !== erpStatus) {
+            // Sprawdzanie nowych pól (elastyczne porównanie uwzględniające brak wartości w istniejących)
+            if (erpStatus && (existing.erpStatus || '') !== erpStatus) {
               diff.push({ field: 'erpStatus', label: 'Status ERP', oldValue: existing.erpStatus || '', newValue: erpStatus });
             }
-            if (positionNumber && existing.positionNumber !== positionNumber) {
+            if (positionNumber && (existing.positionNumber || '') !== positionNumber) {
               diff.push({ field: 'positionNumber', label: 'Poz.-nr', oldValue: existing.positionNumber || '', newValue: positionNumber });
             }
 

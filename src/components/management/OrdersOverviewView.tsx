@@ -1,12 +1,19 @@
 import React, { useState, useMemo } from 'react';
 import { ProductionOrder } from '../../types';
-import { Search, ChevronDown, ChevronUp, ChevronsUpDown, Package, CheckCircle2, Circle } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp, ChevronsUpDown, Package, CheckCircle2, Circle, RefreshCw, Upload } from 'lucide-react';
 import { parseSearchTerms, matchesAllTerms } from '../../utils/search';
 import { cn } from '../../utils/firestore-helpers';
 import { StatusBadge } from '../ui/StatusBadge';
 
 interface OrdersOverviewViewProps {
   orders: ProductionOrder[];
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+  onExcelImport?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  isImporting?: boolean;
+  isAdmin?: boolean;
+  lastImportAt?: { seconds: number };
+  lastImportBy?: string;
 }
 
 type SortConfig = {
@@ -21,9 +28,20 @@ const SYSTEM_STATUSES = [
   { id: 'completed', label: 'Zakończone', activeClass: 'bg-emerald-600 text-white border-emerald-600', inactiveClass: 'bg-white text-stone-500 border-stone-200 hover:border-emerald-300' },
 ];
 
-export function OrdersOverviewView({ orders }: OrdersOverviewViewProps) {
+export function OrdersOverviewView({ 
+  orders,
+  onRefresh,
+  isRefreshing,
+  onExcelImport,
+  isImporting,
+  isAdmin,
+  lastImportAt,
+  lastImportBy
+}: OrdersOverviewViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeSystemStatuses, setActiveSystemStatuses] = useState<string[]>(['pending', 'in-progress', 'reported']);
+  // Domyślnie wszystkie statusy systemowe lub aktywne
+  const [activeSystemStatuses, setActiveSystemStatuses] = useState<string[]>(['pending', 'in-progress', 'reported', 'completed']);
+  // Pusta tablica oznacza "Wszystkie" (brak filtrowania, wszystkie widoczne)
   const [activeErpStatuses, setActiveErpStatuses] = useState<string[]>([]);
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'createdAt', direction: 'desc' });
 
@@ -36,23 +54,16 @@ export function OrdersOverviewView({ orders }: OrdersOverviewViewProps) {
     return Array.from(statuses).sort();
   }, [orders]);
 
-  // Ustawienie domyślnych statusów ERP na starcie (wybierz wszystkie)
-  React.useEffect(() => {
-    if (uniqueErpStatuses.length > 0 && activeErpStatuses.length === 0) {
-      setActiveErpStatuses([...uniqueErpStatuses, 'EMPTY']);
-    }
-  }, [uniqueErpStatuses]);
-
   const filteredAndSortedOrders = useMemo(() => {
     const terms = parseSearchTerms(searchTerm);
     
     let result = orders.filter(order => {
-      // Filtr po Statusie Systemowym
+      // Filtr po Statusie Systemowym (jeśli coś wybrano)
       if (activeSystemStatuses.length > 0 && !activeSystemStatuses.includes(order.status)) {
         return false;
       }
       
-      // Filtr po Statusie ERP
+      // Filtr po Statusie ERP (pusta tablica = brak filtra / wszystkie widoczne)
       if (activeErpStatuses.length > 0) {
         const orderErpStatus = order.erpStatus || 'EMPTY';
         if (!activeErpStatuses.includes(orderErpStatus)) {
@@ -120,38 +131,90 @@ export function OrdersOverviewView({ orders }: OrdersOverviewViewProps) {
     );
   };
 
+  const toggleAllSystemStatuses = () => {
+    if (activeSystemStatuses.length === SYSTEM_STATUSES.length) {
+      setActiveSystemStatuses([]);
+    } else {
+      setActiveSystemStatuses(SYSTEM_STATUSES.map(s => s.id));
+    }
+  };
+
   const toggleErpStatus = (status: string) => {
     setActiveErpStatuses(prev => 
       prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]
     );
   };
 
+  const isAllErpSelected = activeErpStatuses.length === 0;
+  const isAllSystemSelected = activeSystemStatuses.length === SYSTEM_STATUSES.length || activeSystemStatuses.length === 0;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 bg-white p-4 rounded-2xl border border-stone-200 shadow-sm">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <h1 className="text-xl font-black text-stone-800 tracking-tight flex items-center gap-2">
-            <Package className="text-emerald-600" />
-            Przegląd Zleceń Produkcyjnych
-            <span className="text-sm font-medium text-stone-400 ml-2">({filteredAndSortedOrders.length})</span>
-          </h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-xl font-black text-stone-800 tracking-tight flex items-center gap-2">
+              <Package className="text-emerald-600" />
+              Przegląd Zleceń Produkcyjnych
+              <span className="text-sm font-medium text-stone-400 ml-2">({filteredAndSortedOrders.length})</span>
+            </h1>
+            {lastImportAt && (
+              <div className="hidden lg:flex flex-col text-xs text-stone-500 font-medium ml-2 border-l border-stone-200 pl-4">
+                <span className="text-[10px] uppercase tracking-wider text-stone-400 font-bold mb-0.5">Ostatni import</span>
+                <span className="text-stone-700">{new Date(lastImportAt.seconds * 1000).toLocaleString('pl-PL')}</span>
+              </div>
+            )}
+          </div>
 
-          <div className="relative w-full md:w-96">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={16} />
-            <input 
-              type="text" 
-              placeholder="Szukaj (np. znak*c05)..." 
-              value={searchTerm} 
-              onChange={(e) => setSearchTerm(e.target.value)} 
-              className="w-full pl-9 pr-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-medium" 
-            />
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+            <div className="relative flex-1 md:w-80">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={16} />
+              <input 
+                type="text" 
+                placeholder="Szukaj (np. znak*c05)..." 
+                value={searchTerm} 
+                onChange={(e) => setSearchTerm(e.target.value)} 
+                className="w-full pl-9 pr-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-medium" 
+              />
+            </div>
+
+            {onRefresh && (
+              <button
+                onClick={onRefresh}
+                disabled={isRefreshing}
+                title="Odśwież dane z bazy"
+                className="flex items-center gap-2 px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-sm font-bold transition-all shrink-0 active:scale-95 disabled:opacity-50"
+              >
+                <RefreshCw size={16} className={cn(isRefreshing && "animate-spin text-emerald-600")} />
+                <span className="hidden sm:inline">Odśwież</span>
+              </button>
+            )}
+
+            {isAdmin && onExcelImport && (
+              <label className="flex items-center justify-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-xl text-sm font-bold cursor-pointer hover:bg-stone-800 transition-all shadow-sm shrink-0 active:scale-95">
+                <Upload size={16} /> Importuj z ERP
+                <input type="file" accept=".xlsx, .xls" className="hidden" onChange={onExcelImport} disabled={isImporting} />
+              </label>
+            )}
           </div>
         </div>
 
         <div className="flex flex-col gap-3 pt-3 border-t border-stone-100">
-          <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
-            <span className="text-xs font-bold text-stone-400 uppercase tracking-widest shrink-0">Status Sys:</span>
+          <div className="flex flex-col lg:flex-row gap-3 items-start lg:items-center">
+            <span className="text-xs font-bold text-stone-400 uppercase tracking-widest shrink-0 w-24">Status Sys:</span>
             <div className="flex flex-wrap gap-2">
+              <button
+                onClick={toggleAllSystemStatuses}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all active:scale-95",
+                  isAllSystemSelected 
+                    ? "bg-stone-800 text-white border-stone-800 shadow-sm" 
+                    : "bg-white text-stone-500 border-stone-200 hover:border-stone-400"
+                )}
+              >
+                {isAllSystemSelected ? <CheckCircle2 size={14} /> : <Circle size={14} className="opacity-40" />}
+                Wszystkie
+              </button>
               {SYSTEM_STATUSES.map(status => {
                 const isActive = activeSystemStatuses.includes(status.id);
                 return (
@@ -159,11 +222,11 @@ export function OrdersOverviewView({ orders }: OrdersOverviewViewProps) {
                     key={status.id}
                     onClick={() => toggleSystemStatus(status.id)}
                     className={cn(
-                      "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-semibold transition-all active:scale-95",
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all active:scale-95",
                       isActive ? status.activeClass : status.inactiveClass
                     )}
                   >
-                    {isActive ? <CheckCircle2 size={16} /> : <Circle size={16} className="opacity-40" />}
+                    {isActive ? <CheckCircle2 size={14} /> : <Circle size={14} className="opacity-40" />}
                     {status.label}
                   </button>
                 );
@@ -171,9 +234,21 @@ export function OrdersOverviewView({ orders }: OrdersOverviewViewProps) {
             </div>
           </div>
           
-          <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
-            <span className="text-xs font-bold text-stone-400 uppercase tracking-widest shrink-0">Status ERP:</span>
+          <div className="flex flex-col lg:flex-row gap-3 items-start lg:items-center">
+            <span className="text-xs font-bold text-stone-400 uppercase tracking-widest shrink-0 w-24">Status ERP:</span>
             <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setActiveErpStatuses([])}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all active:scale-95",
+                  isAllErpSelected 
+                    ? "bg-stone-800 text-white border-stone-800 shadow-sm" 
+                    : "bg-white text-stone-500 border-stone-200 hover:border-stone-400"
+                )}
+              >
+                {isAllErpSelected ? <CheckCircle2 size={14} /> : <Circle size={14} className="opacity-40" />}
+                Wszystkie
+              </button>
               {['EMPTY', ...uniqueErpStatuses].map(status => {
                 const isActive = activeErpStatuses.includes(status);
                 const label = status === 'EMPTY' ? 'Brak statusu' : status;
@@ -182,13 +257,13 @@ export function OrdersOverviewView({ orders }: OrdersOverviewViewProps) {
                     key={status}
                     onClick={() => toggleErpStatus(status)}
                     className={cn(
-                      "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-semibold transition-all active:scale-95",
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all active:scale-95",
                       isActive 
-                        ? "bg-stone-700 text-white border-stone-700" 
+                        ? "bg-stone-700 text-white border-stone-700 shadow-sm" 
                         : "bg-white text-stone-500 border-stone-200 hover:border-stone-400"
                     )}
                   >
-                    {isActive ? <CheckCircle2 size={16} /> : <Circle size={16} className="opacity-40" />}
+                    {isActive ? <CheckCircle2 size={14} /> : <Circle size={14} className="opacity-40" />}
                     {label}
                   </button>
                 );
