@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInSeconds } from 'date-fns';
-import { Timestamp, doc, updateDoc, collection, query, where, or, getDocs, writeBatch, arrayRemove, serverTimestamp, increment, runTransaction } from 'firebase/firestore'; 
+import { Timestamp, doc, updateDoc, collection, query, where, or, getDocs, onSnapshot, writeBatch, arrayRemove, serverTimestamp, increment, runTransaction } from 'firebase/firestore'; 
 import { db } from '../../firebase';
 
 // Types
@@ -152,7 +152,7 @@ export function MainDashboard(props: MainDashboardProps) {
     }
   }, [props.overrideRole, props.profile?.role]);
 
-  // Pobieranie wszystkich zleceń z bazy (lub wymuszenie odświeżenia po imporcie)
+  // Pobieranie wszystkich zleceń z bazy
   const fetchAllAnalyticalOrders = useCallback(async () => {
     setIsFetchingAnalytical(true);
     try {
@@ -167,12 +167,24 @@ export function MainDashboard(props: MainDashboardProps) {
     }
   }, []);
 
+  // Automatyczny nasłuch w czasie rzeczywistym w widokach analitycznych (w tym w Przeglądzie Zleceń)
   useEffect(() => {
     const isAnalyticalView = ['tonnage-stats', 'element-stats', 'reports', 'timeline', 'orders-overview'].includes(view);
-    if (isAnalyticalView && !analyticalOrders && !isFetchingAnalytical) {
-      fetchAllAnalyticalOrders();
-    }
-  }, [view, analyticalOrders, isFetchingAnalytical, fetchAllAnalyticalOrders]);
+    if (!isAnalyticalView) return;
+
+    setIsFetchingAnalytical(true);
+    const q = query(collection(db, 'orders'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const all = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as ProductionOrder[];
+      setAnalyticalOrders(all);
+      setIsFetchingAnalytical(false);
+    }, (error) => {
+      console.error("Błąd nasłuchiwania zleceń dla analityki:", error);
+      setIsFetchingAnalytical(false);
+    });
+
+    return () => unsubscribe();
+  }, [view]);
 
   // Automatyczne odświeżenie danych analitycznych po wykonaniu importu w systemie
   const lastImportTimestamp = props.systemMetadata?.lastOrderImportAt?.seconds;
@@ -181,6 +193,12 @@ export function MainDashboard(props: MainDashboardProps) {
       fetchAllAnalyticalOrders();
     }
   }, [lastImportTimestamp, fetchAllAnalyticalOrders]);
+
+  // Bezpośrednie wymuszenie odświeżenia zaraz po zakończeniu zatwierdzania importu
+  const handleConfirmImportWithAutoRefresh = async (selected: Set<number>) => {
+    await props.onConfirmImport(selected);
+    await fetchAllAnalyticalOrders();
+  };
 
   const ordersForAnalyticalViews = analyticalOrders || props.orders;
 
@@ -560,7 +578,7 @@ export function MainDashboard(props: MainDashboardProps) {
                   <ImportResolutionModal 
                     newCount={props.pendingNewOrders.length}
                     conflicts={props.importConflicts}
-                    onConfirm={props.onConfirmImport}
+                    onConfirm={handleConfirmImportWithAutoRefresh}
                     onCancel={() => { props.setShowImportModal(false); props.setPendingNewOrders([]); props.setImportConflicts([]); }}
                     isImporting={props.isImporting}
                   />
@@ -755,8 +773,6 @@ export function MainDashboard(props: MainDashboardProps) {
               ) : view === 'orders-overview' && props.isAdmin ? (
                 <OrdersOverviewView 
                   orders={ordersForAnalyticalViews} 
-                  onRefresh={fetchAllAnalyticalOrders}
-                  isRefreshing={isFetchingAnalytical}
                   onExcelImport={props.onExcelImport}
                   isImporting={props.isImporting}
                   isAdmin={props.isAdmin}

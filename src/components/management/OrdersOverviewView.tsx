@@ -1,14 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { ProductionOrder } from '../../types';
-import { Search, ChevronDown, ChevronUp, ChevronsUpDown, Package, CheckCircle2, Circle, RefreshCw, Upload } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp, ChevronsUpDown, Package, CheckCircle2, Circle, Upload } from 'lucide-react';
 import { parseSearchTerms, matchesAllTerms } from '../../utils/search';
 import { cn } from '../../utils/firestore-helpers';
 import { StatusBadge } from '../ui/StatusBadge';
 
 interface OrdersOverviewViewProps {
   orders: ProductionOrder[];
-  onRefresh?: () => void;
-  isRefreshing?: boolean;
   onExcelImport?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   isImporting?: boolean;
   isAdmin?: boolean;
@@ -30,8 +28,6 @@ const SYSTEM_STATUSES = [
 
 export function OrdersOverviewView({ 
   orders,
-  onRefresh,
-  isRefreshing,
   onExcelImport,
   isImporting,
   isAdmin,
@@ -177,18 +173,6 @@ export function OrdersOverviewView({
                 className="w-full pl-9 pr-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-medium" 
               />
             </div>
-
-            {onRefresh && (
-              <button
-                onClick={onRefresh}
-                disabled={isRefreshing}
-                title="Odśwież dane z bazy"
-                className="flex items-center gap-2 px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-sm font-bold transition-all shrink-0 active:scale-95 disabled:opacity-50"
-              >
-                <RefreshCw size={16} className={cn(isRefreshing && "animate-spin text-emerald-600")} />
-                <span className="hidden sm:inline">Odśwież</span>
-              </button>
-            )}
 
             {isAdmin && onExcelImport && (
               <label className="flex items-center justify-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-xl text-sm font-bold cursor-pointer hover:bg-stone-800 transition-all shadow-sm shrink-0 active:scale-95">
