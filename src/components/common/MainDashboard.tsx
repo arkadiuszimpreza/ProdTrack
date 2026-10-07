@@ -268,6 +268,12 @@ export function MainDashboard(props: MainDashboardProps) {
         manual: false,
       });
 
+      // ZMIANA (audyt finding #6): to jest DRUGA, niezależna od useWorkManager.stopWork(),
+      // ścieżka kończenia pracy (admin override). Musi też zwolnić activeWorkLocks/{userId},
+      // inaczej operator zostałby trwale zablokowany przed startem nowej pracy po tym,
+      // jak admin wymusił zatrzymanie jego meldunku.
+      batch.delete(doc(db, 'activeWorkLocks', logToStop.userId));
+
       // 2. Wyrzucenie z zespołu
       if (logToStop.sessionId) {
         batch.update(doc(db, 'workSessions', logToStop.sessionId), {

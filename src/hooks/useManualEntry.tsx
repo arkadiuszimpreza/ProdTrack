@@ -1,8 +1,9 @@
-import { collection, doc, writeBatch, Timestamp } from 'firebase/firestore';
+import { collection, doc, runTransaction, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Employee, ProductionOrder } from '../types';
 import { handleFirestoreError, OperationType } from '../utils/firestore-helpers';
-import { calculateOrderStatus, applyLogImpactToOrder } from '../utils/orderStatus';
+import { applyLogImpactToOrder } from '../utils/orderStatus';
+import { getServerTime } from '../utils/serverTime';
 
 export interface ManualEntryPayload {
   id: string;
@@ -23,103 +24,136 @@ export function useManualEntry(employees: Employee[], orders: ProductionOrder[])
     if (!entries || entries.length === 0) return true;
 
     try {
-      const batch = writeBatch(db);
-      
-      // Słownik będzie agregował więcej danych dla zlecenia
-      const orderUpdates: Record<string, { addedQuantity: number, newCategory: string | null, orderRef: ProductionOrder }> = {};
+      // ZMIANA (audyt finding #5): wpisy ręczne liczyły nową ilość na zleceniu
+      // z lokalnej, możliwe że już nieaktualnej kopii `orders` (stan z listenera),
+      // a nie z transakcji. Jeśli w tym samym momencie ktoś inny kończył pracę na
+      // tym samym zleceniu (stopWork, też licząc appReportedQuantity), jedna z
+      // dwóch ilości przepadała — nadpisanie, nie suma. Transakcja z odczytem
+      // świeżego stanu zlecenia naprawia to tak samo, jak już działa w stopWork().
+      //
+      // Przygotowujemy dane wpisów (walidacja, duration) PRZED transakcją —
+      // to nie zależy od stanu bazy, tylko od tego, co wpisał użytkownik.
+      type PreparedEntry = {
+        userId: string;
+        userName: string;
+        orderId: string | null;
+        orderNumber: string;
+        startTime: Timestamp;
+        endTime: Timestamp | null;
+        duration: number;
+        quantity: number;
+        finalCategory: string | null;
+        elementId: string | null;
+        elementName: string | null;
+      };
 
-      // --- ETAP 1: Przetwarzanie wpisów pracowniczych ---
+      const prepared: PreparedEntry[] = [];
+      const orderIdsInvolved = new Set<string>();
+
       for (const entry of entries) {
         const employee = employees.find(e => e.id === entry.userId);
         let order = entry.order || null;
         if (!order && entry.orderId) {
-            order = orders.find(o => o.id === entry.orderId) || null;
+          order = orders.find(o => o.id === entry.orderId) || null;
         }
 
         if (!employee) {
-           console.warn(`Pominięto wpis: brak pracownika w bazie dla ID: ${entry.userId}`);
-           continue;
+          console.warn(`Pominięto wpis: brak pracownika w bazie dla ID: ${entry.userId}`);
+          continue;
         }
 
         const start = entry.startTime;
         const end = entry.endTime;
-        
-        if (end < start) {
-            end.setDate(end.getDate() + 1);
+
+        if (end && end < start) {
+          end.setDate(end.getDate() + 1);
         }
-        
-        const duration = Math.floor((end.getTime() - start.getTime()) / 1000);
 
-        // Wyznaczamy kategorię ostateczną (priorytet ma ta wybrana ręcznie w formularzu)
+        const duration = end ? Math.floor((end.getTime() - start.getTime()) / 1000) : 0;
         const finalCategory = entry.assortmentCategory || order?.assortmentCategory || null;
+        const orderId = entry.orderId || order?.id || null;
 
-        const logRef = doc(collection(db, 'workLogs'));
-        batch.set(logRef, {
+        prepared.push({
           userId: employee.id,
           userName: employee.displayName || `${employee.firstName} ${employee.lastName}`,
-          orderId: entry.orderId || order?.id || null,
+          orderId,
           orderNumber: order?.orderNumber || (entry.orderId ? 'Archiwalne Zlecenie' : 'Praca ogólna'),
           startTime: Timestamp.fromDate(start),
           endTime: end ? Timestamp.fromDate(end) : null,
-          duration: duration,
-          quantityReported: entry.quantity || 0,
-          assortmentCategory: finalCategory, // To sprawi, że kategoria wyświetli się w "Historii"
+          duration,
+          quantity: entry.quantity || 0,
+          finalCategory,
           elementId: entry.elementId || null,
           elementName: entry.elementName || null,
-          manual: true,
-          createdAt: Timestamp.now()
         });
 
-        // Agregacja dla Zlecenia
-        if (order) {
-          if (!orderUpdates[order.id]) {
-            orderUpdates[order.id] = { addedQuantity: 0, newCategory: null, orderRef: order };
-          }
-          // Dodajemy wyprodukowane sztuki
-          orderUpdates[order.id].addedQuantity += (entry.quantity || 0);
-          
-          // Jeśli użytkownik wybrał kategorię, zapamiętujemy ją, by za chwilę zaktualizować Zlecenie
-          if (finalCategory) {
-            orderUpdates[order.id].newCategory = finalCategory;
-          }
-        }
+        if (orderId) orderIdsInvolved.add(orderId);
       }
 
-      // --- ETAP 2: Aktualizacja zleceń produkcyjnych ---
-      for (const [orderId, updateData] of Object.entries(orderUpdates)) {
-        const order = updateData.orderRef;
-        if (order) {
-          // BEZPIECZNY FALLBACK: Pobieramy aktualne stany lub 0, jeśli zlecenie jest stare
-          const currentAppQty = order.appReportedQuantity || 0;
-          const currentErpQty = order.erpReportedQuantity || order.reportedQuantity || 0;
-          
-          // Dodajemy sztuki TYLKO do puli z aplikacji (hali)
-          const newAppTotal = currentAppQty + updateData.addedQuantity;
-          
-          // STATUS (Scenariusz B): Używamy centralnej reguły statusów
-          const newStatus = calculateOrderStatus(
-            currentErpQty,
-            newAppTotal,
-            order.targetQuantity
-          );
-          
-          // Budujemy obiekt z danymi do aktualizacji zlecenia
-          const updatePayload: any = {
-            appReportedQuantity: newAppTotal,
-            status: newStatus
-          };
+      const createdAt = Timestamp.fromDate(await getServerTime());
 
-          // Jeśli przechwyciliśmy nową kategorię, dopisujemy ją na stałe do Zlecenia
-          if (updateData.newCategory) {
-            updatePayload.assortmentCategory = updateData.newCategory;
+      await runTransaction(db, async (transaction) => {
+        // --- ETAP 1 (odczyty): świeży stan każdego zlecenia, PRZED jakimkolwiek zapisem ---
+        const orderRefs = new Map(Array.from(orderIdsInvolved).map(id => [id, doc(db, 'orders', id)]));
+        const freshOrders = new Map<string, any>();
+        for (const [orderId, orderRef] of orderRefs) {
+          const snap = await transaction.get(orderRef);
+          if (snap.exists()) {
+            freshOrders.set(orderId, snap.data());
           }
-
-          const orderRef = doc(db, 'orders', orderId);
-          batch.update(orderRef, updatePayload);
         }
-      }
 
-      await batch.commit();
+        // --- ETAP 2 (zapisy): logi + sekwencyjne naliczanie wpływu na zlecenia ---
+        // Tą samą funkcją applyLogImpactToOrder() co w stopWork(), żeby elements[]
+        // i status liczyły się identycznie dla wpisu ręcznego i zwykłego zgłoszenia.
+        for (const entry of prepared) {
+          const logRef = doc(collection(db, 'workLogs'));
+          transaction.set(logRef, {
+            userId: entry.userId,
+            userName: entry.userName,
+            orderId: entry.orderId,
+            orderNumber: entry.orderNumber,
+            startTime: entry.startTime,
+            endTime: entry.endTime,
+            duration: entry.duration,
+            quantityReported: entry.quantity,
+            assortmentCategory: entry.finalCategory,
+            elementId: entry.elementId,
+            elementName: entry.elementName,
+            manual: true,
+            createdAt
+          });
+
+          if (entry.orderId && freshOrders.has(entry.orderId)) {
+            const currentData = freshOrders.get(entry.orderId);
+            const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(
+              currentData,
+              entry.elementId,
+              entry.quantity
+            );
+
+            currentData.appReportedQuantity = newAppQty;
+            currentData.elements = newElements;
+            currentData.status = newStatus;
+            if (entry.finalCategory) {
+              currentData.assortmentCategory = entry.finalCategory;
+            }
+          }
+        }
+
+        // --- ETAP 3: finalny zapis zleceń (jeden update na zlecenie, z naliczonym stanem) ---
+        for (const [orderId, orderRef] of orderRefs) {
+          const finalData = freshOrders.get(orderId);
+          if (!finalData) continue; // zlecenie nie istnieje (np. skasowane) — pomijamy update, log już zapisany
+          transaction.update(orderRef, {
+            appReportedQuantity: finalData.appReportedQuantity,
+            status: finalData.status,
+            elements: finalData.elements,
+            ...(finalData.assortmentCategory ? { assortmentCategory: finalData.assortmentCategory } : {})
+          });
+        }
+      });
+
       return true;
 
     } catch (err) {
