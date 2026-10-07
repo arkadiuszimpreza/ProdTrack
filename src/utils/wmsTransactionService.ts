@@ -2,6 +2,7 @@ import { doc, collection, serverTimestamp, Transaction, WriteBatch, Firestore, D
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 import { InventoryTransaction, InventoryTransactionType } from '../types';
+import { getLocalDateString } from './dateUtils';
 
 /**
  * Pobiera pulę unikalnych numerów transakcji WMS z Cloud Function działającej w chmurze GCP.
@@ -191,7 +192,7 @@ export const buildTransactionData = (
   const qty = Math.abs(params.quantity);
   const signedQty = Number((qty * sign).toFixed(3));
   const newQty = Number((params.previousBatchQuantity + signedQty).toFixed(3));
-  const todayStr = params.date || new Date().toISOString().split('T')[0];
+  const todayStr = params.date || getLocalDateString();
   const unitPrice = params.unitPrice !== undefined ? params.unitPrice : 0;
   const totalValue = params.totalValue !== undefined ? params.totalValue : Number((qty * unitPrice).toFixed(2));
 
@@ -283,7 +284,7 @@ export const executeOrderMaterialWithdrawalTx = async (
     const txNumber = seqCounter.getNextNumber('RW');
     seqCounter.commit(transaction);
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateString();
     const unitLabel = batchData.quantityString?.split(' ')[1] || batchData.unit || 'szt';
     const newBatchQty = Number((currentAvailable - params.quantityToWithdraw).toFixed(3));
     const newWithdrawnQty = Number(((batchData.withdrawnQuantity || 0) + params.quantityToWithdraw).toFixed(3));

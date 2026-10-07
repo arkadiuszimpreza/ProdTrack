@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { InventoryBatch, BatchMatchResult } from '../types';
+import { getLocalDateString } from './dateUtils';
 
 const getVal = (row: any, searchKeys: string[]) => {
   const rowKeys = Object.keys(row);
@@ -30,7 +31,7 @@ const parseDate = (val: any): string => {
   if (!val) return '';
   if (typeof val === 'number') {
     const date = new Date((val - 25569) * 86400 * 1000);
-    return date.toISOString().split('T')[0];
+    return getLocalDateString(date);
   }
   const parts = String(val).split('/');
   if (parts.length === 3) {

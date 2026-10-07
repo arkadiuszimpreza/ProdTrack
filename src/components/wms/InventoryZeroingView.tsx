@@ -6,6 +6,7 @@ import { InventoryBatch, InventoryCount } from '../../types';
 import { compareMaterialNames } from "../../utils/materialUtils";
 import { cn } from '../../utils/firestore-helpers';
 import { getSequenceCounter, buildTransactionData, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
+import { getLocalDateString } from '../../utils/dateUtils';
 
 type MaterialFilter = 'ALL' | 'RU' | 'PR' | 'BL' | 'PL' | 'FA' | 'SR' | 'INNE';
 
@@ -45,7 +46,7 @@ export function InventoryZeroingView({ currentUser }: Props) {
   
   const [selectedCategory, setSelectedCategory] = useState<MaterialFilter>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
-  const [cutoffDate, setCutoffDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [cutoffDate, setCutoffDate] = useState<string>(getLocalDateString());
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [unselectedIds, setUnselectedIds] = useState<Set<string>>(new Set());
@@ -133,7 +134,7 @@ export function InventoryZeroingView({ currentUser }: Props) {
           );
 
           const seqCounter = await getSequenceCounter(db, transaction, preReserved);
-          const todayStr = new Date().toISOString().split('T')[0];
+          const todayStr = getLocalDateString();
 
           for (let i = 0; i < chunk.length; i++) {
             const batch = chunk[i];
