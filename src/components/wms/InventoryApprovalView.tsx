@@ -6,6 +6,7 @@ import { InventoryBatch, InventoryAdjustment, InventoryCount } from '../../types
 import { buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
+import { getLocalDateString } from '../../utils/dateUtils';
 
 // Półautomat do kategoryzowania materiałów.
 // Przyjmuje opcjonalny numer artykułu z ERP, który ma najwyższy priorytet –
@@ -104,7 +105,7 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
     if (isProcessing) return;
     setIsProcessing(true);
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = getLocalDateString();
 
       let estimatedPWI = 0;
       let estimatedRWI = 0;
@@ -294,7 +295,7 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
     if (startDate || endDate) {
       finalBatches = finalBatches.filter(b => {
          const d = (b.lastInventoriedAt as any).toDate ? (b.lastInventoriedAt as any).toDate() : new Date((b.lastInventoriedAt as any).seconds * 1000);
-         const bDate = d.toISOString().split('T')[0];
+         const bDate = getLocalDateString(d);
          if (startDate && bDate < startDate) return false;
          if (endDate && bDate > endDate) return false;
          return true;
@@ -307,7 +308,7 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
       let bDate = '-';
       if (b.lastInventoriedAt) {
         const d = (b.lastInventoriedAt as any).toDate ? (b.lastInventoriedAt as any).toDate() : new Date((b.lastInventoriedAt as any).seconds * 1000);
-        bDate = d.toISOString().split('T')[0];
+        bDate = getLocalDateString(d);
       }
 
       // We look at filteredAdjustments to make sure we get an adjustment in that time range
@@ -339,7 +340,7 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
     worksheet['!cols'] = [{ wch: 15 }, { wch: 20 }, { wch: 20 }, { wch: 15 }, { wch: 45 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 20 }];
     const fileName = (startDate || endDate) 
         ? `Pelny_Raport_Inwentaryzacyjny_${startDate || 'Poczatek'}_${endDate || 'Koniec'}.xlsx`
-        : `Pelny_Raport_Inwentaryzacyjny_${new Date().toISOString().split('T')[0]}.xlsx`;
+        : `Pelny_Raport_Inwentaryzacyjny_${getLocalDateString()}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   };
 
@@ -364,7 +365,7 @@ export function InventoryApprovalView({ currentUser = 'Inwentaryzator' }: Props)
     worksheet['!cols'] = [{ wch: 15 }, { wch: 20 }, { wch: 20 }, { wch: 15 }, { wch: 45 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 20 }];
     const fileName = (startDate || endDate) 
         ? `Roznice_Inwentaryzacyjne_${startDate || 'Poczatek'}_${endDate || 'Koniec'}.xlsx`
-        : `Roznice_Inwentaryzacyjne_${new Date().toISOString().split('T')[0]}.xlsx`;
+        : `Roznice_Inwentaryzacyjne_${getLocalDateString()}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   };
 

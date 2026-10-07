@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, updateDoc, getDocs, getDoc, doc, setDoc, serverTimestamp, writeBatch, Timestamp, query, where } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { getServerTime } from '../../utils/serverTime';
 import { FileText, ArrowLeft, Play, Square, User, Clock, CheckCircle2, Users, Search, List } from "lucide-react";
 import { Employee, ProductionOrder, WorkLog, BoardDrawing, BoardDrawingElement, WorkSession } from '../../types';
 import { BoardDrawingViewer } from './BoardDrawingViewer';
@@ -111,8 +112,9 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
         stationName: 'Dział Tablic',
         memberIds: [operator.id, ...selectedCoworkers],
         department: 'Tablice',
-        startTime: Timestamp.now(),
-        lastReportTime: Timestamp.now(),
+        // ZMIANA (audyt finding #4): czas serwera zamiast zegara urządzenia.
+        startTime: serverTimestamp(),
+        lastReportTime: serverTimestamp(),
         status: 'active'
       });
       setSelectedCoworkers([]);
@@ -127,7 +129,8 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
     try {
       await updateDoc(doc(db, 'workSessions', currentSession.id), {
         status: 'completed',
-        endTime: Timestamp.now()
+        // ZMIANA (audyt finding #4): czas serwera zamiast zegara urządzenia.
+        endTime: serverTimestamp()
       });
       setConfirmDialog(null);
     } catch (e) {
@@ -167,8 +170,11 @@ export function OperatorPanelTablice({ operator, orders, activeSessions, onLogou
     setReporting(true);
 
     try {
-      const endTime = Timestamp.now();
-      const startTime = currentSession.lastReportTime 
+      // ZMIANA (audyt finding #4): czas serwera zamiast zegara urządzenia —
+      // ten czas jest tu używany do wyliczenia proporcjonalnego podziału
+      // czasu między operacje i członków zespołu, więc musi być wiarygodny.
+      const endTime = Timestamp.fromDate(await getServerTime());
+      const startTime = currentSession.lastReportTime
         ? (currentSession.lastReportTime instanceof Timestamp ? currentSession.lastReportTime : Timestamp.fromDate(new Date(currentSession.lastReportTime)))
         : (currentSession.startTime instanceof Timestamp ? currentSession.startTime : Timestamp.fromDate(new Date(currentSession.startTime)));
       

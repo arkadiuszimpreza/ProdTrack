@@ -9,6 +9,7 @@ import { collection, onSnapshot, query, orderBy, addDoc, deleteDoc, doc, updateD
 import { db } from '../../firebase';
 import { InventoryBatch, InventoryArticle } from '../../types';
 import { cn } from '../../utils/firestore-helpers';
+import { getLocalDateString } from '../../utils/dateUtils';
 
 interface ReservationRow {
   targetIndex: string;
@@ -403,7 +404,7 @@ export function MaterialReservationsView({ readOnly = false }: MaterialReservati
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Rezerwacje');
-    XLSX.writeFile(workbook, `Rezerwacje_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(workbook, `Rezerwacje_${getLocalDateString()}.xlsx`);
   };
 
   return (

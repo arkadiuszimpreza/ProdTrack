@@ -5,6 +5,7 @@ import { ProductionOrder, WorkLog, WorkSession, WorkStation, Employee, OrderElem
 import { handleFirestoreError, OperationType } from '../utils/firestore-helpers';
 import { User as FirebaseUser } from 'firebase/auth';
 import { calculateOrderStatus, applyLogImpactToOrder } from '../utils/orderStatus';
+import { getServerTime } from '../utils/serverTime';
 
 interface UseWorkManagerProps {
   user: FirebaseUser | null;
@@ -147,7 +148,8 @@ export function useWorkManager({
   const stopWork = async (reports?: { orderId: string, elementId?: string, quantity: number }[]) => {
     if (!activeLog) return;
     try {
-      const endTime = Timestamp.now();
+      // ZMIANA (audyt finding #4): czas serwera zamiast zegara urządzenia.
+      const endTime = Timestamp.fromDate(await getServerTime());
       const startTime = activeLog.startTime instanceof Timestamp ? activeLog.startTime : Timestamp.fromDate(new Date(activeLog.startTime));
       const duration = differenceInSeconds(endTime.toDate(), startTime.toDate());
       

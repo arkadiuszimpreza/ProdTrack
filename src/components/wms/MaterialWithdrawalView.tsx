@@ -7,6 +7,7 @@ import { buildTransactionData, getSequenceCounter, reserveTransactionNumbers } f
 import * as XLSX from 'xlsx';
 import { compareMaterialNames } from "../../utils/materialUtils";
 import { cn } from '../../utils/firestore-helpers';
+import { getLocalDateString } from '../../utils/dateUtils';
 
 // Półautomat do kategoryzowania materiałów.
 // Przyjmuje opcjonalny numer artykułu z ERP, który ma najwyższy priorytet –
@@ -300,7 +301,7 @@ export function MaterialWithdrawalView({ currentUser = 'Zalogowany Pracownik', i
 
     setIsSubmitting(true);
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = getLocalDateString();
 
       const validEntries = Object.entries(withdrawalQuantities).filter(([, rawQty]) => {
         const q = parseFloat(String(rawQty).replace(',', '.'));

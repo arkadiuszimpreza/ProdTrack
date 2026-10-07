@@ -75,10 +75,21 @@ export const getNextWmsSequence = onCall<GetNextSequenceRequest, Promise<GetNext
 
     const requestedCount = Math.max(1, Math.min(Math.floor(count), 500));
 
-    // 4. Autorytatywny czas serwera
+    // 4. Autorytatywny czas serwera, w strefie czasowej Europe/Warsaw.
+    // UWAGA (audyt finding #8, wariant w Cloud Function): serwery Cloud Functions
+    // działają w strefie UTC, niezależnie od tego, gdzie fizycznie jest hala.
+    // `now.getFullYear()/getMonth()` liczyłyby rok/miesiąc w UTC, co w okolicach
+    // północy czasu polskiego (zwłaszcza na przełomie miesiąca) mogłoby przypisać
+    // dokument do poprzedniego miesiąca. `Intl.DateTimeFormat` z jawną strefą
+    // czasową liczy to poprawnie, z uwzględnieniem czasu letniego/zimowego.
     const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const warsawParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Warsaw',
+      year: 'numeric',
+      month: '2-digit',
+    }).formatToParts(now);
+    const year = warsawParts.find(p => p.type === 'year')?.value ?? String(now.getUTCFullYear());
+    const month = warsawParts.find(p => p.type === 'month')?.value ?? String(now.getUTCMonth() + 1).padStart(2, '0');
     const sequenceKey = `${type}_${year}_${month}`;
 
     const counterRef = db.collection('system_configs').doc('wms_transaction_sequences');

@@ -5,6 +5,7 @@ import { InventoryTransaction, InventoryTransactionType } from '../../types';
 import { Search, FileSpreadsheet, Layers, ArrowUpRight, ArrowDownLeft, ShieldCheck } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
+import { getLocalDateString } from '../../utils/dateUtils';
 
 interface Props {
   currentUser?: string;
@@ -286,7 +287,7 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Księga Transakcji WMS");
-    XLSX.writeFile(wb, `Ksiega_Transakcji_WMS_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `Ksiega_Transakcji_WMS_${getLocalDateString()}.xlsx`);
   };
 
   const getBadgeStyle = (type: InventoryTransactionType) => {

@@ -6,6 +6,7 @@ import { InventoryBatch, MaterialWithdrawal } from '../../types';
 import { buildTransactionData, getSequenceCounter, reserveTransactionNumbers } from '../../utils/wmsTransactionService';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
+import { getLocalDateString } from '../../utils/dateUtils';
 
 const guessPrefix = (name: string): string => {
   if (!name) return 'INNE';
@@ -180,7 +181,7 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
 
     setIsSubmitting(true);
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = getLocalDateString();
 
       // Rezerwacja numeru PW z Cloud Function
       const preReserved = await reserveTransactionNumbers({ PW: 1 });
@@ -304,7 +305,7 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Zwroty_MM');
 
     worksheet['!cols'] = [{ wch: 15 }, { wch: 18 }, { wch: 18 }, { wch: 45 }, { wch: 18 }, { wch: 15 }, { wch: 25 }];
-    XLSX.writeFile(workbook, `Ksiega_Zwrotow_MM_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(workbook, `Ksiega_Zwrotow_MM_${getLocalDateString()}.xlsx`);
   };
 
   // Filter withdrawals that can be returned
