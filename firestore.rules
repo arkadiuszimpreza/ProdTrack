@@ -286,6 +286,19 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // NOWA KOLEKCJA (audyt finding #6) — atomowa blokada "aktywna praca per operator",
+    // zakładana w transakcji przy starcie pracy (startWork/startTeamWork/joinTeam) i
+    // usuwana przy jej zakończeniu (stopWork, oraz admin override w MainDashboard).
+    // Istnienie dokumentu = operator ma aktywne zadanie. Ten sam poziom zaufania co
+    // workLogs (role robocze), bo RFID może mapować wielu operatorów na jedno konto
+    // Firebase Auth tabletu — nie da się tu użyć isOwner(). Brak update: blokada jest
+    // binarna (istnieje/nie istnieje), nic w niej się nie edytuje.
+    match /activeWorkLocks/{operatorId} {
+      allow read: if isAuthenticated();
+      allow create, delete: if canWrite();
+      allow update: if false;
+    }
+
     match /workSessions/{sessionId} {
       allow read: if isAuthenticated();
       allow create: if canWrite() && isValidWorkSession(request.resource.data);

@@ -1,4 +1,4 @@
-import { collection, doc, updateDoc, setDoc, writeBatch, serverTimestamp, Timestamp, query, where, getDocs, arrayUnion, arrayRemove, runTransaction } from 'firebase/firestore';
+import { collection, doc, updateDoc, setDoc, serverTimestamp, Timestamp, query, where, getDocs, arrayUnion, arrayRemove, runTransaction } from 'firebase/firestore';
 import { differenceInSeconds } from 'date-fns';
 import { db } from '../firebase';
 import { ProductionOrder, WorkLog, WorkSession, WorkStation, Employee, OrderElement } from '../types';
@@ -25,7 +25,9 @@ export function useWorkManager({
   orders 
 }: UseWorkManagerProps) {
 
-  // --- TWARDA BLOKADA: Czy pracownik może zacząć nową pracę? ---
+  // --- TWARDA BLOKADA (UI): Czy pracownik może zacząć nową pracę? ---
+  // To tylko szybka podpowiedź z lokalnego stanu (listener) — prawdziwa blokada
+  // jest teraz w transakcji przez activeWorkLocks (patrz niżej, finding #6).
   const canStartNewWork = () => {
     if (activeLog) {
       alert("Niedozwolona operacja: Najpierw zakończ obecne zadanie!");
@@ -37,32 +39,54 @@ export function useWorkManager({
   const getIdentifier = () => currentOperator?.id || user?.uid;
   const getName = () => currentOperator?.displayName || user?.displayName || 'Pracownik';
 
+  // ZMIANA (audyt finding #6): `canStartNewWork()` powyżej opiera się o lokalny
+  // stan z listenera Firestore — przy dwóch urządzeniach albo opóźnieniu sieci
+  // nie gwarantuje, że operator nie ma już aktywnej pracy. `activeWorkLocks/{id}`
+  // jest deterministycznym dokumentem-blokadą zakładanym w transakcji: jeśli już
+  // istnieje, transakcja odrzuca start. Usuwany w stopWork() przy kończeniu pracy.
+  const ACTIVE_WORK_EXISTS = 'ACTIVE_WORK_EXISTS';
+
   // 1. Praca Indywidualna
   const startWork = async (order: ProductionOrder, element?: OrderElement) => {
     if (!canStartNewWork()) return;
+    const operatorId = getIdentifier();
+    if (!operatorId) return;
 
     try {
-      const batch = writeBatch(db);
+      const lockRef = doc(db, 'activeWorkLocks', operatorId);
       const newLogRef = doc(collection(db, 'workLogs'));
-      
-      batch.set(newLogRef, {
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        userId: getIdentifier(),
-        userName: getName(),
-        startTime: serverTimestamp(),
-        endTime: null,
-        duration: 0,
-        quantityReported: 0,
-        elementId: element?.id || null,
-        elementName: element?.name || null,
-        assortmentCategory: order.assortmentCategory || null
-      });
+      const orderRef = doc(db, 'orders', order.id);
 
-      batch.update(doc(db, 'orders', order.id), { status: 'in-progress' });
-      await batch.commit();
+      await runTransaction(db, async (transaction) => {
+        const lockSnap = await transaction.get(lockRef);
+        if (lockSnap.exists()) {
+          throw new Error(ACTIVE_WORK_EXISTS);
+        }
+
+        transaction.set(lockRef, { logId: newLogRef.id, startedAt: serverTimestamp() });
+
+        transaction.set(newLogRef, {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          userId: operatorId,
+          userName: getName(),
+          startTime: serverTimestamp(),
+          endTime: null,
+          duration: 0,
+          quantityReported: 0,
+          elementId: element?.id || null,
+          elementName: element?.name || null,
+          assortmentCategory: order.assortmentCategory || null
+        });
+
+        transaction.update(orderRef, { status: 'in-progress' });
+      });
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'workLogs');
+      if (err instanceof Error && err.message === ACTIVE_WORK_EXISTS) {
+        alert("Masz już aktywne zadanie (możliwe, że na innym urządzeniu) — zakończ je najpierw.");
+      } else {
+        handleFirestoreError(err, OperationType.CREATE, 'workLogs');
+      }
     }
   };
 
@@ -72,38 +96,49 @@ export function useWorkManager({
     if (!currentOperator) return;
 
     try {
-      const batch = writeBatch(db);
+      const lockRef = doc(db, 'activeWorkLocks', currentOperator.id);
       const sessionRef = doc(collection(db, 'workSessions'));
       const logRef = doc(collection(db, 'workLogs'));
 
-      // Tworzymy Sesję
-      batch.set(sessionRef, {
-        id: sessionRef.id,
-        stationId: station.id,
-        stationName: station.name,
-        leaderId: currentOperator.id,
-        leaderName: currentOperator.displayName,
-        startTime: serverTimestamp(),
-        status: 'active',
-        memberIds: [currentOperator.id]
-      });
+      await runTransaction(db, async (transaction) => {
+        const lockSnap = await transaction.get(lockRef);
+        if (lockSnap.exists()) {
+          throw new Error(ACTIVE_WORK_EXISTS);
+        }
 
-      // Tworzymy Log dla Lidera (Jedna transakcja z Sesją!)
-      batch.set(logRef, {
-        userId: currentOperator.id,
-        userName: currentOperator.displayName,
-        startTime: serverTimestamp(),
-        endTime: null,
-        duration: 0,
-        quantityReported: 0,
-        sessionId: sessionRef.id,
-        stationId: station.id,
-        stationName: station.name
-      });
+        transaction.set(lockRef, { logId: logRef.id, startedAt: serverTimestamp() });
 
-      await batch.commit();
+        // Tworzymy Sesję
+        transaction.set(sessionRef, {
+          id: sessionRef.id,
+          stationId: station.id,
+          stationName: station.name,
+          leaderId: currentOperator.id,
+          leaderName: currentOperator.displayName,
+          startTime: serverTimestamp(),
+          status: 'active',
+          memberIds: [currentOperator.id]
+        });
+
+        // Tworzymy Log dla Lidera (jedna transakcja z Sesją i blokadą!)
+        transaction.set(logRef, {
+          userId: currentOperator.id,
+          userName: currentOperator.displayName,
+          startTime: serverTimestamp(),
+          endTime: null,
+          duration: 0,
+          quantityReported: 0,
+          sessionId: sessionRef.id,
+          stationId: station.id,
+          stationName: station.name
+        });
+      });
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'workSessions');
+      if (err instanceof Error && err.message === ACTIVE_WORK_EXISTS) {
+        alert("Masz już aktywne zadanie (możliwe, że na innym urządzeniu) — zakończ je najpierw.");
+      } else {
+        handleFirestoreError(err, OperationType.CREATE, 'workSessions');
+      }
     }
   };
 
@@ -112,35 +147,47 @@ export function useWorkManager({
     if (!canStartNewWork()) return;
     if (!currentOperator) return;
 
-    // Sprawdzamy czy już w nim nie jest
+    // Sprawdzamy czy już w nim nie jest (podpowiedź UI — prawdziwa blokada jest w transakcji)
     if (session.memberIds.includes(currentOperator.id)) {
       alert("Jesteś już w tym zespole!");
       return;
     }
 
     try {
-      const batch = writeBatch(db);
-      
-      batch.update(doc(db, 'workSessions', session.id), {
-        memberIds: arrayUnion(currentOperator.id)
-      });
-
+      const lockRef = doc(db, 'activeWorkLocks', currentOperator.id);
+      const sessionRef = doc(db, 'workSessions', session.id);
       const logRef = doc(collection(db, 'workLogs'));
-      batch.set(logRef, {
-        userId: currentOperator.id,
-        userName: currentOperator.displayName,
-        startTime: serverTimestamp(),
-        endTime: null,
-        duration: 0,
-        quantityReported: 0,
-        sessionId: session.id,
-        stationId: session.stationId,
-        stationName: session.stationName
-      });
 
-      await batch.commit();
+      await runTransaction(db, async (transaction) => {
+        const lockSnap = await transaction.get(lockRef);
+        if (lockSnap.exists()) {
+          throw new Error(ACTIVE_WORK_EXISTS);
+        }
+
+        transaction.set(lockRef, { logId: logRef.id, startedAt: serverTimestamp() });
+
+        transaction.update(sessionRef, {
+          memberIds: arrayUnion(currentOperator.id)
+        });
+
+        transaction.set(logRef, {
+          userId: currentOperator.id,
+          userName: currentOperator.displayName,
+          startTime: serverTimestamp(),
+          endTime: null,
+          duration: 0,
+          quantityReported: 0,
+          sessionId: session.id,
+          stationId: session.stationId,
+          stationName: session.stationName
+        });
+      });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, 'workSessions');
+      if (err instanceof Error && err.message === ACTIVE_WORK_EXISTS) {
+        alert("Masz już aktywne zadanie (możliwe, że na innym urządzeniu) — zakończ je najpierw.");
+      } else {
+        handleFirestoreError(err, OperationType.UPDATE, 'workSessions');
+      }
     }
   };
 
@@ -247,12 +294,17 @@ export function useWorkManager({
                 const logRef = doc(db, 'workLogs', log.id);
                 transaction.delete(logRef);
               }
+              // ZMIANA (audyt finding #6): zwalniamy blokadę dla KAŻDEGO członka
+              // zespołu, nie tylko lidera — lider kończy sesję za wszystkich.
+              transaction.delete(doc(db, 'activeWorkLocks', log.userId));
             }
 
           } else {
             // CZŁONEK OPUSZCZA ZESPÓŁ
             const logRef = doc(db, 'workLogs', activeLog.id);
             transaction.update(logRef, { endTime, duration });
+            // ZMIANA (audyt finding #6): zwalniamy blokadę tego konkretnego operatora.
+            transaction.delete(doc(db, 'activeWorkLocks', activeLog.userId));
             if (activeLog.sessionId) {
               const sessionRef = doc(db, 'workSessions', activeLog.sessionId);
               transaction.update(sessionRef, {
@@ -280,6 +332,8 @@ export function useWorkManager({
           transaction.update(logRef, {
             endTime, duration, quantityReported: quantity
           });
+          // ZMIANA (audyt finding #6): zwalniamy blokadę tego operatora.
+          transaction.delete(doc(db, 'activeWorkLocks', activeLog.userId));
 
           if (orderRef && oData) {
             const { newAppQty, newElements, newStatus } = applyLogImpactToOrder(oData, activeLog.elementId, quantity);
