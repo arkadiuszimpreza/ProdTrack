@@ -8,6 +8,25 @@ import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 import { getLocalDateString } from '../../utils/dateUtils';
 
+// ZMIANA (błąd zgubionych zwrotów, paź 2026): batchNumber nie jest unikalny w bazie —
+// ten sam numer wsadu mógł przez błąd ludzki zostać przypisany dwóm różnym dokumentom
+// (nawet dwóm różnym indeksom). Nowe pobrania mają już zapisane `batchId` (patrz
+// MaterialWithdrawalView.tsx i wmsTransactionService.ts) — to jedyne pewne odniesienie.
+// Dla starszych pobrań (bez batchId, sprzed tej poprawki) dopasowujemy awaryjnie po
+// (batchNumber + articleNumber) — mniej ryzykowne niż sam batchNumber, ale wciąż nie
+// w 100% pewne, jeśli duplikat dotyczył tego samego indeksu. Takie przypadki trzeba
+// rozpoznać i skorygować ręcznie (korekta stanu), nie da się tego naprawić w kodzie
+// z mocą wsteczną.
+const resolveBatchForWithdrawal = (
+  w: { batchId?: string; batchNumber: string; articleNumber: string },
+  batches: InventoryBatch[]
+): InventoryBatch | undefined => {
+  if (w.batchId) {
+    return batches.find(b => b.id === w.batchId);
+  }
+  return batches.find(b => b.batchNumber === w.batchNumber && b.articleNumber === w.articleNumber);
+};
+
 const guessPrefix = (name: string): string => {
   if (!name) return 'INNE';
   const n = name.toLowerCase();
@@ -79,9 +98,9 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
 
     setReturnModalItem(w);
     setReturnInputQty(String(maxToReturn));
-    
+
     setReturnCalcPieces('');
-    const batch = batches.find(b => b.batchNumber === w.batchNumber);
+    const batch = resolveBatchForWithdrawal(w, batches);
     if (batch) {
       setReturnCalcLength(extractLengthFromDimensions(batch.dimensions));
       const dimMatch = batch.dimensions?.match(/(\d+(?:[\.,]\d+)?)\s*[xX×]\s*(\d+(?:[\.,]\d+)?)/);
@@ -129,7 +148,7 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
       setReturnCalcHeight(val);
     }
     
-    const batch = batches.find(b => b.batchNumber === returnModalItem.batchNumber);
+    const batch = resolveBatchForWithdrawal(returnModalItem, batches);
     if (!batch) return;
 
     const p = parseFloat(pieces.replace(/,/g, '.'));
@@ -200,12 +219,21 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
           throw new Error('Wprowadzono nieprawidłową lub zbyt dużą ilość zwrotu! Maksymalnie: ' + maxToReturn);
         }
 
-        const yardSnap = batches.find(b => b.batchNumber === withdrawalData.batchNumber);
+        // ZMIANA (błąd zgubionych zwrotów, paź 2026): jeśli pobranie ma zapisane `batchId`
+        // (nowe pobrania — patrz MaterialWithdrawalView.tsx / wmsTransactionService.ts),
+        // odnosimy się do wsadu PO ID DOKUMENTU, niezależnie od lokalnego stanu `batches`
+        // z listenera. To jedyny pewny sposób — batchNumber to tylko etykieta i może się
+        // powtórzyć na dwóch różnych wsadach (potwierdzony przypadek: błąd ludzki przy
+        // nadawaniu numeru farbie). Tylko dla STARYCH pobrań bez batchId (sprzed poprawki)
+        // używamy awaryjnego dopasowania po (batchNumber + articleNumber) z lokalnej listy.
+        const resolvedBatchId: string | undefined = withdrawalData.batchId
+          || batches.find(b => b.batchNumber === withdrawalData.batchNumber && b.articleNumber === withdrawalData.articleNumber)?.id;
+
         let batchRef = null;
         let batchData = null;
-        
-        if (yardSnap && yardSnap.id) {
-          batchRef = doc(db, 'inventoryBatches', yardSnap.id);
+
+        if (resolvedBatchId) {
+          batchRef = doc(db, 'inventoryBatches', resolvedBatchId);
           const batchSnap = await transaction.get(batchRef);
           if (batchSnap.exists()) {
             batchData = batchSnap.data();
@@ -222,6 +250,7 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
           articleNumber: withdrawalData.articleNumber,
           articleName: withdrawalData.articleName,
           batchNumber: withdrawalData.batchNumber,
+          batchId: resolvedBatchId,
           sourcePurchaseOrderId: withdrawalData.sourcePurchaseOrderId || '',
           quantityWithdrawn: returnQty,
           returnedQuantity: 0, 
@@ -249,7 +278,7 @@ export function MaterialReturnsView({ currentUser = 'Zalogowany Pracownik' }: Ma
           const txRef = doc(collection(db, 'inventoryTransactions'));
           const txData = buildTransactionData({
             type: 'PW',
-            batchId: yardSnap!.id!,
+            batchId: resolvedBatchId!,
             batchNumber: withdrawalData.batchNumber,
             articleNumber: withdrawalData.articleNumber || '',
             articleName: withdrawalData.articleName || '',
