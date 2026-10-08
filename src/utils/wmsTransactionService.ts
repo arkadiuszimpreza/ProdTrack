@@ -297,6 +297,10 @@ export const executeOrderMaterialWithdrawalTx = async (
       articleNumber: batchData.articleNumber || '',
       articleName: batchData.articleName || '',
       batchNumber: batchData.batchNumber,
+      // ZMIANA (błąd zgubionych zwrotów, paź 2026): zapisujemy ID konkretnego
+      // dokumentu wsadu, nie tylko jego nazwę — batchNumber nie jest unikalny
+      // (może powtórzyć się na dwóch różnych wsadach przez błąd ludzki przy odbiorze).
+      batchId: params.batchId,
       sourcePurchaseOrderId: batchData.sourcePurchaseOrderId || '',
       quantityWithdrawn: params.quantityToWithdraw,
       type: 'WITHDRAWAL',

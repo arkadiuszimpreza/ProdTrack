@@ -512,7 +512,13 @@ export interface MaterialWithdrawal {
   workerName: string; // Osoba/konto raportujące pobranie z magazynu
   articleNumber: string; // np. SZR00035
   articleName: string; // Tuleja dystansowa...
-  batchNumber: string; // np. 26RU042
+  batchNumber: string; // np. 26RU042 — TYLKO do wyświetlania! Numer wsadu nie jest unikalny
+  // w bazie (błąd ludzki przy nadawaniu numeru może przypisać ten sam numer dwóm różnym
+  // wsadom, nawet różnych indeksów) — jedynym pewnym odnośnikiem do konkretnego dokumentu
+  // w `inventoryBatches` jest `batchId` poniżej.
+  batchId?: string; // ID dokumentu w inventoryBatches (audyt finding #5-bis, paź 2026).
+  // Opcjonalne: starsze pobrania (sprzed tej poprawki) go nie mają — wtedy zwrot musi
+  // awaryjnie dopasowywać się po (batchNumber + articleNumber), patrz MaterialReturnsView.
   quantityWithdrawn: number; // Ilość (w jednostce wsadu np. mb, kg)
   returnedQuantity?: number;
   calculatorDetails?: string; // Informacja o sposobie przeliczenia np. z kalkulatora blach
