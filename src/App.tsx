@@ -40,6 +40,17 @@ import { cn } from './utils/firestore-helpers';
 
 import { TVMonitorView } from './components/production/TVMonitorView';
 
+// ZMIANA (audyt finding #10): widoczny komunikat, gdy listener Firestore (onSnapshot)
+// napotka błąd (utrata uprawnień, brak sieci) — wcześniej taki błąd ginął bez śladu
+// w konsoli, a ekran w ciszy zostawał przy ostatnich znanych danych.
+function ConnectionErrorBanner({ message }: { message: string }) {
+  return (
+    <div className="fixed top-0 left-0 right-0 z-[9999] bg-red-600 text-white text-center text-xs sm:text-sm font-bold py-2 px-4 shadow-lg">
+      ⚠ {message}
+    </div>
+  );
+}
+
 export default function App() {
   const [isTvMode, setIsTvMode] = useState(
     window.location.pathname === '/tv' || window.location.hash === '#tv'
@@ -51,6 +62,9 @@ export default function App() {
   const [currentOperator, setCurrentOperator] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
   const [overrideRole, setOverrideRole] = useState<UserProfile['role'] | null>(null);
+  // ZMIANA (audyt finding #10): komunikat o błędzie logowania/weryfikacji konta —
+  // wyświetlany na ekranie logowania, gdy onAuthStateChanged napotka błąd (patrz niżej).
+  const [authError, setAuthError] = useState<string | null>(null);
   
   const currentRole = (overrideRole || profile?.role)?.toLowerCase() as UserRole | undefined;
   const isAdmin = currentRole === 'admin';
@@ -61,9 +75,9 @@ export default function App() {
 
   // 2. Dyspozytor Danych (Nasz wydzielony Hook do odczytu)
   // Jeśli konto oczekuje na zatwierdzenie (pending), nie uruchamiamy subskrypcji danych produkcyjnych
-  const { 
+  const {
     orders, employees, workStations, activeSessions, activeLog, setActiveLog, allActiveLogs, systemMetadata,
-    updateLocalOrder
+    updateLocalOrder, connectionError
   } = useProductionData(isPending ? null : user, isAdmin, currentOperator);
 
   // 3. Kierownik Zmiany (Nasz wydzielony Hook do operacji na czasie pracy)
@@ -94,27 +108,43 @@ export default function App() {
       }
 
       setUser(u);
-      if (u) {
-        const userRef = doc(db, 'users', u.uid);
-        const userDoc = await getDoc(userRef);
-        if (userDoc.exists()) {
-          setProfile({ ...userDoc.data(), uid: u.uid } as UserProfile);
-        } else {
-          const newProfile = { uid: u.uid, displayName: u.displayName || 'Użytkownik', email: u.email || '', role: 'pending' };
-          await setDoc(userRef, newProfile);
-          setProfile(newProfile as UserProfile);
-        }
-
-        // Live snapshot profilu — natychmiastowe odblokowanie po zatwierdzeniu roli przez admina
-        unsubProfileSnapshot = onSnapshot(userRef, (snap) => {
-          if (snap.exists()) {
-            setProfile({ ...snap.data(), uid: u.uid } as UserProfile);
+      // ZMIANA (audyt finding #10): bez try/catch, błąd w getDoc/setDoc (np. brak sieci,
+      // albo konto spoza domeny @erplast.pl odrzucone przez firestore.rules) przerywał tę
+      // funkcję PRZED linią setLoading(false) — ekran zostawał na wiecznym spinnerze,
+      // z którego nie było wyjścia bez twardego odświeżenia strony.
+      try {
+        if (u) {
+          const userRef = doc(db, 'users', u.uid);
+          const userDoc = await getDoc(userRef);
+          if (userDoc.exists()) {
+            setProfile({ ...userDoc.data(), uid: u.uid } as UserProfile);
+          } else {
+            const newProfile = { uid: u.uid, displayName: u.displayName || 'Użytkownik', email: u.email || '', role: 'pending' };
+            await setDoc(userRef, newProfile);
+            setProfile(newProfile as UserProfile);
           }
-        });
-      } else {
+
+          // Live snapshot profilu — natychmiastowe odblokowanie po zatwierdzeniu roli przez admina
+          unsubProfileSnapshot = onSnapshot(userRef, (snap) => {
+            if (snap.exists()) {
+              setProfile({ ...snap.data(), uid: u.uid } as UserProfile);
+            }
+          });
+          setAuthError(null);
+        } else {
+          setProfile(null);
+        }
+      } catch (e) {
+        console.error('Błąd podczas logowania / weryfikacji konta:', e);
+        // Wracamy do czystego ekranu logowania z jasnym komunikatem, zamiast zostawiać
+        // aplikację w "dziurawym" stanie (user zalogowany w Firebase Auth, ale bez profilu).
         setProfile(null);
+        setUser(null);
+        setAuthError('Nie udało się zweryfikować konta. Sprawdź, czy logujesz się kontem w domenie @erplast.pl i czy masz połączenie z internetem, a następnie spróbuj ponownie.');
+        try { await signOut(auth); } catch { /* najlepszy wysiłek — i tak wyzerowaliśmy lokalny stan */ }
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => {
@@ -222,9 +252,16 @@ export default function App() {
     setIsImporting(true);
     try {
       const { employeesToAdd, addedNames, skippedNames } = await parseEmployeesExcel(file, employees);
-      const batch = writeBatch(db);
-      employeesToAdd.forEach(emp => batch.set(doc(collection(db, 'employees')), { ...emp, createdAt: serverTimestamp() }));
-      await batch.commit();
+      // ZMIANA (audyt finding #10): pojedynczy writeBatch ma twardy limit 500 operacji —
+      // większy import pracowników nie zapisywał się wcale. Dzielimy na paczki po 400,
+      // tak jak już robi to confirmImport() dla zleceń.
+      const BATCH_SIZE = 400;
+      for (let i = 0; i < employeesToAdd.length; i += BATCH_SIZE) {
+        const batch = writeBatch(db);
+        const chunk = employeesToAdd.slice(i, i + BATCH_SIZE);
+        chunk.forEach(emp => batch.set(doc(collection(db, 'employees')), { ...emp, createdAt: serverTimestamp() }));
+        await batch.commit();
+      }
       setImportSummary({ added: addedNames, skipped: skippedNames });
     } catch (e) { console.error(e); }
     finally { setIsImporting(false); e.target.value = ''; }
@@ -240,7 +277,12 @@ export default function App() {
   const loggedInName = profile?.displayName || user?.displayName || user?.email?.split('@')[0] || 'Nieznany Pracownik';
 
   if ((isTvMode || profile?.role === 'tv-monitor') && !loading && user) {
-    return <TVMonitorView activeLogs={allActiveLogs} orders={orders} />;
+    return (
+      <>
+        {connectionError && <ConnectionErrorBanner message={connectionError} />}
+        <TVMonitorView activeLogs={allActiveLogs} orders={orders} />
+      </>
+    );
   }
 
   if (loading) return (
@@ -262,6 +304,9 @@ export default function App() {
         <h1 className="text-3xl font-black text-stone-900 mb-2 tracking-tight">ProdSSS Erplast</h1>
         <p className="text-stone-500 mb-8 font-medium">Zaloguj się kontem Google, aby autoryzować urządzenie.</p>
         <button onClick={handleLogin} className="w-full flex items-center justify-center gap-3 py-4 bg-stone-900 text-white rounded-2xl font-bold hover:bg-stone-800 transition-all shadow-xl active:scale-95">Zaloguj przez Google</button>
+        {authError && (
+          <p className="mt-4 text-sm font-semibold text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">{authError}</p>
+        )}
       </motion.div>
     </div>
   );
@@ -281,6 +326,7 @@ export default function App() {
   if ((currentRole === 'operator' || currentRole === 'operator-wms' || currentRole === 'operator-tablice') && !currentOperator) {
     return (
       <>
+        {connectionError && <ConnectionErrorBanner message={connectionError} />}
         <RFIDLogin employees={employees.filter(e => !e.isArchived)} onLogin={(emp) => setCurrentOperator(emp)} onLogoutDevice={handleLogout} />
         <KeyboardToggle />
         {showKeyboard && <VirtualKeyboard />}
@@ -292,7 +338,8 @@ export default function App() {
     if (wmsMode && currentRole === 'operator-wms') {
        return (
          <>
-           <WMSOperatorDashboard 
+           {connectionError && <ConnectionErrorBanner message={connectionError} />}
+           <WMSOperatorDashboard
              user={user} profile={profile} currentOperator={currentOperator}
              onLogout={() => { setWmsMode(false); setCurrentOperator(null); }}
              onBackToOperator={() => setWmsMode(false)}
@@ -306,7 +353,8 @@ export default function App() {
     if (currentRole === 'operator-tablice') {
        return (
          <>
-           <OperatorPanelTablice 
+           {connectionError && <ConnectionErrorBanner message={connectionError} />}
+           <OperatorPanelTablice
              operator={currentOperator} orders={orders} activeLog={activeLog} 
              activeSessions={activeSessions}
              onLogout={() => setCurrentOperator(null)}
@@ -320,7 +368,8 @@ export default function App() {
 
     return (
       <>
-        <OperatorPanel 
+        {connectionError && <ConnectionErrorBanner message={connectionError} />}
+        <OperatorPanel
           operator={currentOperator} orders={orders} activeLog={activeLog} allActiveLogs={allActiveLogs} 
           workStations={workStations} activeSessions={activeSessions} 
           onLogout={() => setCurrentOperator(null)} 
@@ -339,7 +388,8 @@ export default function App() {
 
   return (
     <>
-      <MainDashboard 
+      {connectionError && <ConnectionErrorBanner message={connectionError} />}
+      <MainDashboard
         user={user} profile={profile} isAdmin={isAdmin} orders={orders} employees={employees} systemMetadata={systemMetadata} 
         workStations={workStations} activeSessions={activeSessions} activeLog={activeLog} allActiveLogs={allActiveLogs}
         currentOperator={currentOperator || employees.find(e => e.id === user?.uid) || null}

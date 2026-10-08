@@ -16,6 +16,23 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
   const [activeLog, setActiveLog] = useState<WorkLog | null>(null);
   const [allActiveLogs, setAllActiveLogs] = useState<WorkLog[]>([]);
 
+  // ZMIANA (audyt finding #10): `handleFirestoreError` loguje i RZUCA wyjątek — to jest
+  // poprawne wewnątrz try/catch w funkcjach zapisu (gdzie ktoś ten wyjątek łapie i np.
+  // pokazuje alert()), ale w callbacku błędu `onSnapshot` nikt go nie łapie. Taki
+  // nieobsłużony wyjątek ginie w konsoli, a ekran w ciszy zostaje przy ostatnich znanych
+  // danych — operator pracuje "na niby", myśląc że widzi aktualny stan. `connectionError`
+  // daje UI (App.tsx) coś, co może pokazać na ekranie każdej roli.
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+
+  const reportListenerError = (err: unknown, op: OperationType, path: string) => {
+    try {
+      handleFirestoreError(err, op, path);
+    } catch (e) {
+      console.error(e);
+    }
+    setConnectionError('Utracono połączenie z bazą danych lub brak uprawnień do odczytu. Dane na ekranie mogą być nieaktualne — odśwież stronę.');
+  };
+
   // 1. Nasłuchiwanie aktywnych czasów pracy
   useEffect(() => {
     // ZMIANA 2: Ustalamy, czyjego ID szukamy. Operator z karty RFID ma pierwszeństwo przed kontem tabletu.
@@ -30,19 +47,21 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
     // Teraz szukamy logów dla WŁAŚCIWEGO człowieka
     const qUser = query(collection(db, 'workLogs'), where('userId', '==', effectiveUserId), where('endTime', '==', null));
     const unsubscribeUser = onSnapshot(qUser, (snapshot) => {
+      setConnectionError(null);
       if (!snapshot.empty) {
         const log = snapshot.docs[0].data() as WorkLog;
         setActiveLog({ ...log, id: snapshot.docs[0].id });
       } else {
         setActiveLog(null);
       }
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'workLogs'));
+    }, (err) => reportListenerError(err, OperationType.LIST, 'workLogs'));
 
     const qAll = query(collection(db, 'workLogs'), where('endTime', '==', null));
     const unsubscribeAll = onSnapshot(qAll, (snapshot) => {
+      setConnectionError(null);
       const logs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as WorkLog[];
       setAllActiveLogs(logs);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'workLogs'));
+    }, (err) => reportListenerError(err, OperationType.LIST, 'workLogs'));
 
     return () => { unsubscribeUser(); unsubscribeAll(); };
   }, [user, currentOperator]); // ZMIANA 3: Hook reaguje za każdym razem, gdy ktoś odbije/zabierze kartę RFID
@@ -60,17 +79,18 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
     );
         
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      setConnectionError(null);
       const ordersData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as ProductionOrder[];
-      
+
       // Sortowanie po stronie klienta, żeby nie wymuszać tworzenia złożonego indeksu (Composite Index) w Firestore
       ordersData.sort((a, b) => {
         const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
         const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
         return timeB - timeA;
       });
-      
+
       setOrders(ordersData);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'orders'));
+    }, (err) => reportListenerError(err, OperationType.LIST, 'orders'));
         
     return () => unsubscribe();
   }, [user]);
@@ -82,9 +102,10 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
     
     const q = query(collection(db, 'employees'), orderBy('lastName', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      setConnectionError(null);
       const employeesData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as Employee[];
       setEmployees(employeesData);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'employees'));
+    }, (err) => reportListenerError(err, OperationType.LIST, 'employees'));
     
     return () => unsubscribe();
   }, [user]); // Usunięto isAdmin z tablicy zależności
@@ -94,9 +115,10 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
     if (!user) return;
     const q = query(collection(db, 'workStations'), orderBy('name', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      setConnectionError(null);
       const stationsData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as WorkStation[];
       setWorkStations(stationsData);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'workStations'));
+    }, (err) => reportListenerError(err, OperationType.LIST, 'workStations'));
     return () => unsubscribe();
   }, [user]);
 
@@ -105,9 +127,10 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
     if (!user) return;
     const q = query(collection(db, 'workSessions'), where('status', '==', 'active'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      setConnectionError(null);
       const sessionsData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as WorkSession[];
       setActiveSessions(sessionsData);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'workSessions'));
+    }, (err) => reportListenerError(err, OperationType.LIST, 'workSessions'));
     return () => unsubscribe();
   }, [user]);
 
@@ -115,12 +138,13 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
   useEffect(() => {
     if (!user) return;
     const unsubscribe = onSnapshot(doc(db, "system", "metadata"), (docSnap) => {
+      setConnectionError(null);
       if (docSnap.exists()) {
         setSystemMetadata(docSnap.data());
       } else {
         setSystemMetadata(null);
       }
-    }, (err) => handleFirestoreError(err, OperationType.LIST, "system/metadata"));
+    }, (err) => reportListenerError(err, OperationType.LIST, "system/metadata"));
     return () => unsubscribe();
   }, [user]);
 
@@ -140,6 +164,7 @@ export function useProductionData(user: FirebaseUser | null, isAdmin: boolean, c
     activeLog,
     setActiveLog, 
     allActiveLogs,
-    systemMetadata
+    systemMetadata,
+    connectionError
   };
 }
