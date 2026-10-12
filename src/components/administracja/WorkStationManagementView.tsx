@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Factory, Plus, X, Save, Edit2, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { WorkStation } from '../../types';
+import { useDictionary } from '../../hooks/useDictionary';
+import { proposeMpkForStations, type MpkRef } from '../../utils/stationMpk';
 
 export function WorkStationManagementView({
   stations,
@@ -21,19 +23,70 @@ export function WorkStationManagementView({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<WorkStation>>({});
+  const [mpkCode, setMpkCode] = useState('');
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Słownik MPK (pozycje zapisane w słowniku systemowym); puste, dopóki nie zostanie wczytany.
+  const mpkDictionary = useDictionary('mpk');
+  const mpkList: MpkRef[] = mpkDictionary.items.map((row) => ({
+    code: String(row.code ?? ''),
+    name: String(row.name ?? ''),
+    active: row.active !== false,
+  }));
+  const mpkLabel = (code: string | undefined) => {
+    if (!code) return null;
+    const found = mpkList.find((m) => m.code === code);
+    return found ? `${found.code} ${found.name}` : `${code} (brak w słowniku MPK)`;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name) return;
 
     setIsSubmitting(true);
-    const success = await onAdd({ name, description });
+    const success = await onAdd(mpkCode ? { name, description, mpkCode } : { name, description });
     if (success) {
       setName('');
       setDescription('');
+      setMpkCode('');
       setShowAddForm(false);
     }
     setIsSubmitting(false);
+  };
+
+  // Propozycja MPK z numeru na początku nazwy stanowiska — tylko dla stanowisk bez przypisanego MPK.
+  const handleProposeMpk = async () => {
+    setNotice(null);
+    const { proposals, unmatched } = proposeMpkForStations(stations, mpkList);
+    if (proposals.length === 0) {
+      setNotice(
+        unmatched.length > 0
+          ? `Nie znaleziono dopasowań w słowniku MPK (stanowisk bez MPK: ${unmatched.length}). Sprawdź, czy słownik MPK został wczytany.`
+          : 'Wszystkie stanowiska mają już przypisane MPK.'
+      );
+      return;
+    }
+    const inactive = proposals.filter((p) => !p.mpkActive).length;
+    const confirmed = window.confirm(
+      `Przypisać MPK ${proposals.length} stanowiskom na podstawie numeru w nazwie?` +
+        (inactive > 0 ? `\n\nUwaga: ${inactive} z nich wskazuje wyłączone MPK.` : '') +
+        (unmatched.length > 0 ? `\n\nBez dopasowania zostanie: ${unmatched.length}.` : '') +
+        '\n\nStanowiska, które już mają MPK, nie zostaną zmienione.'
+    );
+    if (!confirmed) return;
+
+    setIsSubmitting(true);
+    let failed = 0;
+    for (const proposal of proposals) {
+      const ok = await onUpdate(proposal.stationId, { mpkCode: proposal.mpkCode });
+      if (!ok) failed++;
+    }
+    setIsSubmitting(false);
+    setNotice(
+      failed === 0
+        ? `Przypisano MPK: ${proposals.length}.`
+        : `Przypisano MPK: ${proposals.length - failed} z ${proposals.length}. Nie udało się zapisać: ${failed}.`
+    );
   };
 
   const handleEditSave = async (id: string) => {
@@ -56,14 +109,30 @@ export function WorkStationManagementView({
           Zarządzanie Stanowiskami
         </h2>
         
-        <button 
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
-        >
-          <Plus size={18} />
-          Dodaj stanowisko
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleProposeMpk}
+            disabled={isSubmitting || mpkList.length === 0}
+            title={mpkList.length === 0 ? 'Najpierw wczytaj słownik MPK (Administracja → Słowniki systemowe)' : undefined}
+            className="px-4 py-2 min-h-[44px] bg-white border border-stone-200 text-stone-700 rounded-xl text-sm font-bold hover:bg-stone-50 transition-all disabled:opacity-50"
+          >
+            Zaproponuj MPK z numeru w nazwie
+          </button>
+          <button
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
+          >
+            <Plus size={18} />
+            Dodaj stanowisko
+          </button>
+        </div>
       </div>
+
+      {notice && (
+        <div className="p-4 rounded-xl border bg-emerald-50 border-emerald-200 text-emerald-800 text-sm whitespace-pre-line">
+          {notice}
+        </div>
+      )}
 
       <AnimatePresence>
         {showAddForm && (
@@ -95,6 +164,19 @@ export function WorkStationManagementView({
                     placeholder="Krótki opis stanowiska"
                     className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-black uppercase tracking-wider text-stone-400 ml-1">Miejsce powstawania kosztów (opcjonalnie)</label>
+                  <select
+                    value={mpkCode}
+                    onChange={(e) => setMpkCode(e.target.value)}
+                    className="w-full p-3 min-h-[44px] bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                  >
+                    <option value="">— nie przypisano —</option>
+                    {mpkList.filter((m) => m.active).map((m) => (
+                      <option key={m.code} value={m.code}>{m.code} {m.name}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="flex justify-end gap-3 pt-2">
@@ -139,6 +221,7 @@ export function WorkStationManagementView({
                 <tr className="bg-stone-50 border-b border-stone-100">
                   <th className="p-4 text-left text-[10px] font-black uppercase tracking-wider text-stone-400">Nazwa</th>
                   <th className="p-4 text-left text-[10px] font-black uppercase tracking-wider text-stone-400">Opis</th>
+                  <th className="p-4 text-left text-[10px] font-black uppercase tracking-wider text-stone-400">MPK</th>
                   <th className="p-4 text-right text-[10px] font-black uppercase tracking-wider text-stone-400">Akcje</th>
                 </tr>
               </thead>
@@ -165,6 +248,27 @@ export function WorkStationManagementView({
                         />
                       ) : (
                         station.description || <span className="text-stone-300 italic">Brak opisu</span>
+                      )}
+                    </td>
+                    <td className="p-4 text-sm text-stone-600">
+                      {editingId === station.id ? (
+                        <select
+                          value={editData.mpkCode || ''}
+                          onChange={(e) => setEditData({ ...editData, mpkCode: e.target.value })}
+                          className="w-full p-2 min-h-[44px] text-sm border border-stone-200 rounded-lg focus:ring-2 focus:ring-emerald-500/20"
+                        >
+                          <option value="">— nie przypisano —</option>
+                          {mpkList
+                            .filter((m) => m.active || m.code === editData.mpkCode)
+                            .map((m) => (
+                              <option key={m.code} value={m.code}>{m.code} {m.name}</option>
+                            ))}
+                          {editData.mpkCode && !mpkList.some((m) => m.code === editData.mpkCode) && (
+                            <option value={editData.mpkCode}>{editData.mpkCode} (brak w słowniku MPK)</option>
+                          )}
+                        </select>
+                      ) : (
+                        mpkLabel(station.mpkCode) || <span className="text-stone-300 italic">Nie przypisano</span>
                       )}
                     </td>
                     <td className="p-4 text-right">
@@ -214,7 +318,7 @@ export function WorkStationManagementView({
                             <button 
                               onClick={() => {
                                 setEditingId(station.id);
-                                setEditData({ name: station.name, description: station.description });
+                                setEditData({ name: station.name, description: station.description, mpkCode: station.mpkCode ?? '' });
                               }}
                               className="p-1.5 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
                               title="Edytuj"
