@@ -228,6 +228,24 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // Słowniki systemowe (wydziały, magazyny, statusy, MPK) — jeden dokument na słownik,
+    // pozycje w tablicy `items`. Czyta każdy zalogowany, zapisuje wyłącznie admin.
+    // Dopuszczone tylko znane identyfikatory dokumentów (brak „zabłąkanych” dokumentów).
+    function isValidDictionary(data) {
+      return data.keys().hasOnly(['items', 'updatedAt', 'updatedBy']) &&
+             data.items is list && data.items.size() <= 500 &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('updatedBy' in data) || (data.updatedBy is string && data.updatedBy.size() < 200));
+    }
+
+    match /dictionaries/{dictId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() &&
+        dictId in ['departments', 'warehouses', 'customerOrderStatuses', 'pspStatuses', 'mpk'] &&
+        isValidDictionary(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
     match /techOperations/{document} {
       allow read: if isAuthenticated();
       allow create, update, delete: if isAdmin();
