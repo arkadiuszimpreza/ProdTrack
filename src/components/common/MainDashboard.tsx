@@ -64,6 +64,7 @@ import { InventoryLedgerView } from '../wms/InventoryLedgerView';
 import { InventoryBOInitializationModal } from '../wms/InventoryBOInitializationModal';
 import { TechOperationsView } from '../administracja/TechOperationsView';
 import { TechProcessesView } from '../administracja/TechProcessesView';
+import { DictionariesView } from '../administracja/DictionariesView';
 import { MissingWeightsView } from '../production/MissingWeightsView';
 import { BoardDrawingsManager } from '../administracja/BoardDrawingsManager';
 import { TonnageStatsView } from '../management/TonnageStatsView';
@@ -114,7 +115,7 @@ interface MainDashboardProps {
 }
 
 export function MainDashboard(props: MainDashboardProps) {
-  const [view, setView] = useState<'orders' | 'orders-overview' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'attendance-import' | 'attendance-oee' | 'timeline' | 'stations' | 'docs' | 'live' | 'element-stats' | 'tonnage-stats' | 'wms-inventory' | 'wms-deliveries' | 'wms-deliveries-admin' | 'wms-registry' | 'wms-coeffs' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations' | 'wms-ledger' | 'tech-operations' | 'tech-processes' | 'missing-weights' | 'tech-board-drawings'>('live');
+  const [view, setView] = useState<'orders' | 'orders-overview' | 'history' | 'manual-entry' | 'employees' | 'reports' | 'attendance-import' | 'attendance-oee' | 'timeline' | 'stations' | 'docs' | 'live' | 'element-stats' | 'tonnage-stats' | 'wms-inventory' | 'wms-deliveries' | 'wms-deliveries-admin' | 'wms-registry' | 'wms-coeffs' | 'wms-wip' | 'wms-returns' | 'wms-taking' | 'wms-zeroing' | 'wms-approval' | 'wms-import' | 'wms-receipts' | 'wms-admin' | 'wms-reservations' | 'wms-ledger' | 'tech-operations' | 'tech-processes' | 'missing-weights' | 'tech-board-drawings' | 'system-dictionaries'>('live');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeStatuses, setActiveStatuses] = useState<ProductionOrder['status'][]>(['pending', 'in-progress', 'reported', 'completed']);
   const [manualEntryVersion, setManualEntryVersion] = useState<1 | 2>(1);
@@ -553,6 +554,7 @@ export function MainDashboard(props: MainDashboardProps) {
                     <SidebarItem active={view === 'stations'} onClick={() => { setView('stations'); setIsSidebarOpen(false); }} icon={<Briefcase size={18} />} text="Stanowiska" />
                     <SidebarItem active={view === 'tech-operations'} onClick={() => { setView('tech-operations'); setIsSidebarOpen(false); }} icon={<Settings size={18} />} text="Słownik Operacji Tech." />
                     <SidebarItem active={view === 'tech-processes'} onClick={() => { setView('tech-processes'); setIsSidebarOpen(false); }} icon={<LayoutList size={18} />} text="Słownik Procesów Tech." />
+                    <SidebarItem active={view === 'system-dictionaries'} onClick={() => { setView('system-dictionaries'); setIsSidebarOpen(false); }} icon={<BookOpen size={18} />} text="Słowniki systemowe" />
                     <SidebarItem active={view === 'tech-board-drawings'} onClick={() => { setView('tech-board-drawings'); setIsSidebarOpen(false); }} icon={<FileText size={18} />} text="Rysunki Tablic (PDF)" />
                     <SidebarItem active={view === 'docs'} onClick={() => { setView('docs'); setIsSidebarOpen(false); }} icon={<FileText size={18} />} text="Dokumentacja" />
                     <SidebarItem active={view === 'wms-admin'} onClick={() => { setView('wms-admin'); setIsSidebarOpen(false); }} icon={<Settings size={18} />} text="Skrypty WMS" />
@@ -772,6 +774,8 @@ export function MainDashboard(props: MainDashboardProps) {
                 <TechOperationsView workStations={props.workStations} onBack={() => setView('live')} />
               ) : view === 'tech-processes' && props.isAdmin ? (
                 <TechProcessesView workStations={props.workStations} onBack={() => setView('live')} />
+              ) : view === 'system-dictionaries' && props.isAdmin ? (
+                <DictionariesView onBack={() => setView('live')} />
               ) : view === 'tech-board-drawings' && props.isAdmin ? (
                 <BoardDrawingsManager orders={props.orders} userProfile={props.profile} />
               ) : view === 'missing-weights' ? (
