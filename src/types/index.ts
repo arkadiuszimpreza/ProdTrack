@@ -153,6 +153,11 @@ export interface WorkStation {
   code?: string;
   /** Opcjonalny opis stanowiska */
   description?: string;
+  /**
+   * Kod miejsca powstawania kosztów (kod ze słownika `mpk`, np. "102").
+   * Wiele stanowisk może mieć to samo MPK. Brak lub pusty tekst = nie przypisano.
+   */
+  mpkCode?: string;
   /** Data utworzenia stanowiska */
   createdAt: any;
 }
