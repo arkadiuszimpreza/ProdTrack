@@ -46,6 +46,31 @@ export function useWorkManager({
   // istnieje, transakcja odrzuca start. Usuwany w stopWork() przy kończeniu pracy.
   const ACTIVE_WORK_EXISTS = 'ACTIVE_WORK_EXISTS';
 
+  // POPRAWKA (osierocone blokady): blokada mogła zostać, mimo że praca już się skończyła —
+  // np. admin usunął lub edytował trwający meldunek w „Podsumowaniu zlecenia klienta”
+  // albo w Historii (te ekrany nie zdejmują blokady). Wtedy operator nie ma żadnej pracy,
+  // a mimo to dostaje „Masz już aktywne zadanie”. Przed startem sprawdzamy więc,
+  // czy wpis pracy wskazany w blokadzie nadal trwa. Jeśli nie istnieje albo ma endTime,
+  // blokada jest martwa i ją usuwamy. Prawdziwie aktywnej pracy NIE ruszamy.
+  const releaseStaleLock = async (operatorId: string) => {
+    try {
+      const lockRef = doc(db, 'activeWorkLocks', operatorId);
+      await runTransaction(db, async (transaction) => {
+        const lockSnap = await transaction.get(lockRef);
+        if (!lockSnap.exists()) return;
+        const logId = lockSnap.data().logId;
+        if (typeof logId !== 'string' || logId === '') return; // nie wiemy, czego dotyczy — nie ruszamy
+        const logSnap = await transaction.get(doc(db, 'workLogs', logId));
+        if (!logSnap.exists() || logSnap.data().endTime != null) {
+          transaction.delete(lockRef);
+        }
+      });
+    } catch (err) {
+      // Nieudane sprzątanie = zachowanie jak dotąd (start zostanie zablokowany komunikatem).
+      console.warn('Nie udało się sprawdzić blokady aktywnej pracy:', err);
+    }
+  };
+
   // 1. Praca Indywidualna
   const startWork = async (order: ProductionOrder, element?: OrderElement) => {
     if (!canStartNewWork()) return;
@@ -53,6 +78,7 @@ export function useWorkManager({
     if (!operatorId) return;
 
     try {
+      await releaseStaleLock(operatorId);
       const lockRef = doc(db, 'activeWorkLocks', operatorId);
       const newLogRef = doc(collection(db, 'workLogs'));
       const orderRef = doc(db, 'orders', order.id);
@@ -96,6 +122,7 @@ export function useWorkManager({
     if (!currentOperator) return;
 
     try {
+      await releaseStaleLock(currentOperator.id);
       const lockRef = doc(db, 'activeWorkLocks', currentOperator.id);
       const sessionRef = doc(collection(db, 'workSessions'));
       const logRef = doc(collection(db, 'workLogs'));
@@ -154,6 +181,7 @@ export function useWorkManager({
     }
 
     try {
+      await releaseStaleLock(currentOperator.id);
       const lockRef = doc(db, 'activeWorkLocks', currentOperator.id);
       const sessionRef = doc(db, 'workSessions', session.id);
       const logRef = doc(collection(db, 'workLogs'));
