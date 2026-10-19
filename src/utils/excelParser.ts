@@ -32,6 +32,7 @@ const determineAssortmentCategory = (productName: string, articleNumber: string)
   name.includes('rama') || 
   name.includes('słupek ozdobny') || 
   name.includes('park') || 
+  name.includes('odbój') || 
   name.includes('bydgoski')) {
     return 'Astor';
   }
