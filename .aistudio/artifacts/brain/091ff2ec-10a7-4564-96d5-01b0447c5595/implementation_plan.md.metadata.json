@@ -1,0 +1,6 @@
+{
+  "summary":  "Plan optymalizacji i paginacji Księgi Transakcji Magazynowych (WMS ERP) z agregacją liczby kwitów z bazy, kursorem startAfter (+500) oraz wyszukiwaniem ruchów konkretnego wsadu od początku bazy.",
+  "updatedAt":  "2026-10-22T05:11:07.511799897Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

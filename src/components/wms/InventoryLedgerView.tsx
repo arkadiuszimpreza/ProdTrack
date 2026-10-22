@@ -1,8 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import { 
+  collection, 
+  query, 
+  getDocs, 
+  onSnapshot, 
+  orderBy, 
+  limit, 
+  startAfter, 
+  where, 
+  getCountFromServer, 
+  QueryDocumentSnapshot, 
+  DocumentData 
+} from 'firebase/firestore';
 import { db } from '../../firebase';
 import { InventoryTransaction, InventoryTransactionType } from '../../types';
-import { Search, FileSpreadsheet, Layers, ArrowUpRight, ArrowDownLeft, ShieldCheck } from 'lucide-react';
+import { Search, FileSpreadsheet, Layers, ArrowUpRight, ArrowDownLeft, ShieldCheck, Database, RotateCcw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { cn } from '../../utils/firestore-helpers';
 import { getLocalDateString } from '../../utils/dateUtils';
@@ -14,7 +26,15 @@ interface Props {
 
 export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOpenBOModal }: Props) {
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
+  const [mainTransactions, setMainTransactions] = useState<InventoryTransaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [totalInDbCount, setTotalInDbCount] = useState<number | null>(null);
+  const [lastVisibleDoc, setLastVisibleDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [isBatchSearchMode, setIsBatchSearchMode] = useState(false);
+  const [searchedBatchTerm, setSearchedBatchTerm] = useState('');
+  const [isSearchingDb, setIsSearchingDb] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
@@ -24,31 +44,164 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
   const [endDate, setEndDate] = useState('');
   const [selectedTransaction, setSelectedTransaction] = useState<InventoryTransaction | null>(null);
 
-  // Mapy do wyznaczania jednostkowej ceny i wartości w PLN dla transakcji
-  const [batchesMap, setBatchesMap] = useState<Map<string, { unitPrice?: number; sourcePurchaseOrderId?: string; articleNumber?: string; batchNumber?: string; articleName?: string }>>(new Map());
+  interface BatchInfo {
+    unitPrice?: number;
+    sourcePurchaseOrderId?: string;
+    articleNumber?: string;
+    batchNumber?: string;
+    articleName?: string;
+    coefficient?: string | number;
+    dimensions?: string;
+    unit?: string;
+  }
+
+  // Mapy do wyznaczania jednostkowej ceny, wartości w PLN oraz parametrów przeliczeniowych blach (arkusze, m2)
+  const [batchesMap, setBatchesMap] = useState<Map<string, BatchInfo>>(new Map());
   const [poPricesMap, setPoPricesMap] = useState<Map<string, number>>(new Map());
 
+  // Inicjalne pobieranie: całkowita liczba kwitów w bazie + pierwsze 1000 najnowszych transakcji
   useEffect(() => {
-    const q = query(
-      collection(db, 'inventoryTransactions'),
-      orderBy('createdAt', 'desc'),
-      limit(1000)
-    );
+    let isMounted = true;
 
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map(doc => ({
+    const fetchTotalCount = async () => {
+      try {
+        const countSnap = await getCountFromServer(collection(db, 'inventoryTransactions'));
+        if (isMounted) {
+          setTotalInDbCount(countSnap.data().count);
+        }
+      } catch (err) {
+        console.error("Błąd podczas pobierania łącznej liczby transakcji w bazie:", err);
+      }
+    };
+    fetchTotalCount();
+
+    const fetchInitialTransactions = async () => {
+      try {
+        setLoading(true);
+        const q = query(
+          collection(db, 'inventoryTransactions'),
+          orderBy('createdAt', 'desc'),
+          limit(1000)
+        );
+        const snap = await getDocs(q);
+        if (!isMounted) return;
+
+        const list = snap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as InventoryTransaction));
+
+        setTransactions(list);
+        setMainTransactions(list);
+        if (snap.docs.length > 0) {
+          setLastVisibleDoc(snap.docs[snap.docs.length - 1]);
+        }
+        setHasMore(snap.docs.length === 1000);
+      } catch (err) {
+        console.error("Błąd podczas inicjalnego pobierania transakcji magazynowych:", err);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchInitialTransactions();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Paginacja: Załaduj starsze transakcje (+500) za pomocą kursora startAfter
+  const handleLoadMore = async () => {
+    if (!lastVisibleDoc || loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const nextQ = query(
+        collection(db, 'inventoryTransactions'),
+        orderBy('createdAt', 'desc'),
+        startAfter(lastVisibleDoc),
+        limit(500)
+      );
+      const snap = await getDocs(nextQ);
+      const nextList = snap.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       } as InventoryTransaction));
-      setTransactions(list);
-      setLoading(false);
-    }, (err) => {
-      console.error("Błąd podczas pobierania transakcji magazynowych:", err);
-      setLoading(false);
-    });
 
-    return () => unsub();
-  }, []);
+      setTransactions(prev => [...prev, ...nextList]);
+      setMainTransactions(prev => [...prev, ...nextList]);
+      if (snap.docs.length > 0) {
+        setLastVisibleDoc(snap.docs[snap.docs.length - 1]);
+      }
+      if (snap.docs.length < 500) {
+        setHasMore(false);
+      }
+    } catch (err) {
+      console.error("Błąd podczas doczytywania starszych transakcji (+500):", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  // Wyszukiwanie konkretnego wsadu w całej bazie (od początku historii)
+  const handleBatchSearch = async () => {
+    const term = searchTerm.trim();
+    if (!term) {
+      if (isBatchSearchMode) {
+        handleResetBatchSearch();
+      }
+      return;
+    }
+
+    setIsSearchingDb(true);
+    try {
+      const batchQ = query(
+        collection(db, 'inventoryTransactions'),
+        where('batchNumber', '==', term)
+      );
+      const snap = await getDocs(batchQ);
+      let list = snap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as InventoryTransaction));
+
+      // Sprawdzenie wariantu wielkich liter (np. bl-2024 -> BL-2024)
+      if (list.length === 0 && term !== term.toUpperCase()) {
+        const upperQ = query(
+          collection(db, 'inventoryTransactions'),
+          where('batchNumber', '==', term.toUpperCase())
+        );
+        const upperSnap = await getDocs(upperQ);
+        list = upperSnap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as InventoryTransaction));
+      }
+
+      // Sortowanie transakcji tego wsadu od najnowszych
+      list.sort((a, b) => {
+        const dateA = a.createdAt || a.date || '';
+        const dateB = b.createdAt || b.date || '';
+        return dateB.localeCompare(dateA);
+      });
+
+      setIsBatchSearchMode(true);
+      setSearchedBatchTerm(term);
+      setTransactions(list);
+    } catch (err) {
+      console.error("Błąd podczas wyszukiwania wsadu w bazie:", err);
+    } finally {
+      setIsSearchingDb(false);
+    }
+  };
+
+  const handleResetBatchSearch = () => {
+    setIsBatchSearchMode(false);
+    setSearchedBatchTerm('');
+    setTransactions(mainTransactions);
+  };
 
   // Pobieranie map cen z wsadów i oczekiwanych dostaw
   useEffect(() => {
@@ -57,12 +210,15 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
       snap.docs.forEach(docSnap => {
         const data = docSnap.data();
         const price = data.unitPrice ?? (data.totalValue && data.numericQuantity ? data.totalValue / data.numericQuantity : undefined);
-        const info = {
+        const info: BatchInfo = {
           unitPrice: price,
           sourcePurchaseOrderId: data.sourcePurchaseOrderId,
           articleNumber: data.articleNumber,
           batchNumber: data.batchNumber,
-          articleName: data.articleName
+          articleName: data.articleName,
+          coefficient: data.coefficient,
+          dimensions: data.dimensions,
+          unit: data.unit
         };
         bMap.set(docSnap.id, info);
         if (data.batchNumber) {
@@ -181,6 +337,45 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
     return 'INNE';
   };
 
+  // Przeliczanie metryk blachy/płyty (kg -> arkusze i m²) tak samo jak w Stanie Placu (InventoryYardView)
+  const getBlachaMetricsForQty = (t: InventoryTransaction, qty: number) => {
+    const bInfo = batchesMap.get(t.batchId) || batchesMap.get(t.batchNumber);
+    const matType = getTxMaterialType(t, bInfo);
+    if (matType !== 'BL' && matType !== 'PL') return null;
+
+    const unit = (t.unit || bInfo?.unit || '').toLowerCase();
+    if (unit !== 'kg') return null;
+
+    const coeff = bInfo?.coefficient;
+    if (!coeff) return null;
+    const coeffStr = String(coeff).replace(/,/g, '.');
+    const coeffNum = parseFloat(coeffStr);
+    if (isNaN(coeffNum) || coeffNum <= 0) return null;
+
+    const totalAreaM2 = Math.abs(qty) / coeffNum;
+    const dimStr = bInfo?.dimensions || t.calculatorDetails || '';
+    let sheets: number | undefined = undefined;
+
+    if (dimStr) {
+      const dimMatch = dimStr.match(/(\d+(?:[\.,]\d+)?)[\s]*[xX×][\s]*(\d+(?:[\.,]\d+)?)/);
+      if (dimMatch && dimMatch[1] && dimMatch[2]) {
+        const w = parseFloat(dimMatch[1].replace(/,/g, '.'));
+        const h = parseFloat(dimMatch[2].replace(/,/g, '.'));
+        if (w > 0 && h > 0) {
+          const sheetAreaM2 = (w / 1000) * (h / 1000);
+          if (sheetAreaM2 > 0) {
+            sheets = totalAreaM2 / sheetAreaM2;
+          }
+        }
+      }
+    }
+
+    return {
+      m2: totalAreaM2,
+      sheets
+    };
+  };
+
   const filteredTransactions = useMemo(() => {
     return transactions.filter(t => {
       if (typeFilter !== 'ALL' && t.type !== typeFilter) return false;
@@ -261,6 +456,7 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
     const exportData = filteredTransactions.map(t => {
       const unitPrice = getTxUnitPrice(t);
       const totalVal = getTxTotalValue(t);
+      const blachaMetrics = getBlachaMetricsForQty(t, t.quantity);
       return {
         'Nr Kwitu': t.transactionNumber,
         'Typ Dok.': t.type,
@@ -272,6 +468,8 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
         'Ilość Operacji': t.quantity,
         'Ilość ze Znakiem': t.signedQuantity,
         'Jednostka': t.unit,
+        'Ilość Arkuszy': blachaMetrics?.sheets !== undefined ? Math.round(blachaMetrics.sheets * 10) / 10 : '',
+        'Powierzchnia (m²)': blachaMetrics?.m2 !== undefined ? parseFloat(blachaMetrics.m2.toFixed(2)) : '',
         'Cena Jednostkowa (PLN)': unitPrice,
         'Wartość Transakcji (PLN)': t.sign > 0 ? totalVal : -totalVal,
         'Stan Przed': t.previousBatchQuantity,
@@ -386,9 +584,19 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
         </div>
 
         <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm flex flex-col">
-          <span className="text-[11px] font-bold text-stone-400 uppercase tracking-wider">Liczba Kwitów</span>
-          <div className="text-xl font-black text-stone-900 mt-1">
-            {stats.totalCount}
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-stone-400 uppercase tracking-wider">Liczba Kwitów</span>
+            {isBatchSearchMode && (
+              <span className="text-[9px] font-black bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase tracking-wide">
+                Wsad z bazy
+              </span>
+            )}
+          </div>
+          <div className="text-xl font-black text-stone-900 mt-1 flex items-baseline gap-1.5 flex-wrap">
+            <span>{stats.totalCount}</span>
+            <span className="text-xs font-semibold text-stone-400">
+              (Pobrano: {transactions.length}{totalInDbCount !== null ? ` / Baza: ${totalInDbCount.toLocaleString('pl-PL')}` : ''})
+            </span>
           </div>
           <div className="text-[10px] text-stone-500 font-bold mt-1 flex gap-1.5 flex-wrap">
             <span className="text-emerald-700">PZ:{stats.countPZ}</span>
@@ -404,16 +612,56 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
       {/* PASEK FILTRÓW */}
       <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-sm w-full flex flex-col xl:flex-row gap-4 items-center justify-between">
         <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto flex-1">
-          {/* Wyszukiwarka */}
-          <div className="relative flex-1 min-w-[220px] max-w-md">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+          {/* Wyszukiwarka z obsługą Enter i szukania wsadu w całej bazie */}
+          <div className="relative flex-1 min-w-[260px] max-w-lg flex items-center">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
             <input
               type="text"
-              placeholder="Szukaj po nr kwitu, nr wsadu, artykule, pracowniku..."
+              placeholder="Szukaj (wpisz wsad i [Enter], aby przeszukać bazę)..."
               value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              onChange={e => {
+                const val = e.target.value;
+                setSearchTerm(val);
+                if (!val && isBatchSearchMode) {
+                  handleResetBatchSearch();
+                }
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleBatchSearch();
+                }
+              }}
+              className="w-full pl-9 pr-24 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
+            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    handleResetBatchSearch();
+                  }}
+                  className="p-1 text-stone-400 hover:text-stone-600 rounded text-xs"
+                  title="Wyczyść"
+                >
+                  ✕
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleBatchSearch}
+                disabled={isSearchingDb || !searchTerm.trim()}
+                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-stone-200 disabled:text-stone-400 text-white text-[11px] font-bold rounded-lg transition-colors flex items-center gap-1 shadow-xs"
+                title="Wyszukaj wszystkie ruchy tego wsadu od początku bazy"
+              >
+                {isSearchingDb ? (
+                  <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  'Baza'
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Filtry Grupy Materiałowej (ze zdjęcia: Wszystko, RU, PR, BL, PL, FA, SR) */}
@@ -471,6 +719,35 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
         </div>
       </div>
 
+      {/* BANNER TRYBU WYSZUKIWANIA WSADU W CAŁEJ BAZIE */}
+      {isBatchSearchMode && (
+        <div className="w-full bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-indigo-950 shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-indigo-600 text-white rounded-xl">
+              <Database size={16} />
+            </div>
+            <div>
+              <div className="font-black text-indigo-900 flex items-center gap-2">
+                <span>Historia wsadu z całej bazy</span>
+                <span className="px-2 py-0.5 bg-indigo-200 text-indigo-800 rounded font-mono text-[11px]">
+                  {searchedBatchTerm}
+                </span>
+              </div>
+              <p className="text-[11px] text-indigo-700 mt-0.5">
+                Pobrano wszystkie ruchy magazynowe (od początku istnienia bazy): <strong>{transactions.length}</strong> {transactions.length === 1 ? 'kwit' : 'kwitów'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleResetBatchSearch}
+            className="px-3.5 py-2 bg-white hover:bg-indigo-100 border border-indigo-300 text-indigo-800 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 shadow-xs shrink-0"
+          >
+            <RotateCcw size={14} />
+            Wróć do wszystkich kwitów
+          </button>
+        </div>
+      )}
+
       {/* TABELA TRANSAKCJI */}
       <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden w-full">
         <div className="overflow-x-auto">
@@ -519,9 +796,32 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
                         </div>
                       </td>
                       <td className="py-3 px-4 text-right font-bold">
-                        <span className={cn(t.sign > 0 ? "text-emerald-600 font-black" : "text-rose-600 font-black")}>
-                          {t.sign > 0 ? `+${t.quantity}` : `-${t.quantity}`} {t.unit}
-                        </span>
+                        <div className="flex flex-col items-end">
+                          <span className={cn(t.sign > 0 ? "text-emerald-600 font-black" : "text-rose-600 font-black")}>
+                            {t.sign > 0 ? `+${t.quantity}` : `-${t.quantity}`} {t.unit}
+                          </span>
+                          {(() => {
+                            const metrics = getBlachaMetricsForQty(t, t.quantity);
+                            if (!metrics) return null;
+                            const textParts = [];
+                            if (metrics.sheets !== undefined) {
+                              const roundedSheets = Math.round(metrics.sheets * 10) / 10;
+                              textParts.push(`${roundedSheets} ark.`);
+                            }
+                            textParts.push(`${parseFloat(metrics.m2.toFixed(2))} m²`);
+                            return (
+                              <span 
+                                className={cn(
+                                  "text-[10px] font-semibold whitespace-nowrap mt-0.5",
+                                  t.sign > 0 ? "text-emerald-700/80" : "text-rose-700/80"
+                                )}
+                                title="Wartości przeliczone na podstawie wagi i wymiarów (jak w stanie placu)"
+                              >
+                                {textParts.join(' | ')}
+                              </span>
+                            );
+                          })()}
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className={cn("font-black text-xs", t.sign > 0 ? "text-emerald-700" : "text-rose-700")}>
@@ -556,6 +856,39 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
             </tbody>
           </table>
         </div>
+
+        {/* PAGINACJA / ŁADOWANIE STARSZYCH TRANSAKCJI */}
+        {!isBatchSearchMode && (
+          <div className="p-4 bg-stone-50 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="text-xs text-stone-500 font-medium">
+              Pobrano do widoku <span className="font-bold text-stone-800">{transactions.length}</span> z{' '}
+              <span className="font-bold text-stone-800">{totalInDbCount !== null ? totalInDbCount.toLocaleString('pl-PL') : '...'}</span> transakcji w bazie
+            </div>
+
+            {hasMore ? (
+              <button
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="w-full sm:w-auto px-5 py-2.5 bg-stone-900 hover:bg-stone-800 disabled:bg-stone-400 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {loadingMore ? (
+                  <>
+                    <span className="inline-block w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Ładowanie starszych transakcji...
+                  </>
+                ) : (
+                  <>
+                    Załaduj starsze transakcje (+500)
+                  </>
+                )}
+              </button>
+            ) : (
+              <span className="text-xs text-stone-400 font-semibold italic">
+                Załadowano wszystkie dostępne transakcje z bazy
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* MODAL SZCZEGÓŁÓW DOKUMENTU */}
@@ -594,25 +927,66 @@ export function InventoryLedgerView({ currentUser = 'Zalogowany Pracownik', onOp
               </div>
 
               <div className="grid grid-cols-4 gap-2 text-center">
-                <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-100">
-                  <span className="text-[10px] text-stone-400 font-bold uppercase">Stan Przed</span>
-                  <p className="font-bold text-stone-800 text-xs mt-1">{selectedTransaction.previousBatchQuantity} {selectedTransaction.unit}</p>
+                <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-100 flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] text-stone-400 font-bold uppercase">Stan Przed</span>
+                    <p className="font-bold text-stone-800 text-xs mt-1">{selectedTransaction.previousBatchQuantity} {selectedTransaction.unit}</p>
+                  </div>
+                  {(() => {
+                    const metrics = getBlachaMetricsForQty(selectedTransaction, selectedTransaction.previousBatchQuantity);
+                    if (!metrics || metrics.sheets === undefined) return null;
+                    return (
+                      <p className="text-[10px] text-stone-500 font-semibold mt-1">
+                        ≈ {Math.round(metrics.sheets * 10) / 10} ark.
+                      </p>
+                    );
+                  })()}
                 </div>
-                <div className={cn("p-2.5 rounded-xl border", selectedTransaction.sign > 0 ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200")}>
-                  <span className="text-[10px] font-bold uppercase text-stone-500">Ilość</span>
-                  <p className={cn("font-black text-xs mt-1", selectedTransaction.sign > 0 ? "text-emerald-700" : "text-rose-700")}>
-                    {selectedTransaction.sign > 0 ? `+${selectedTransaction.quantity}` : `-${selectedTransaction.quantity}`} {selectedTransaction.unit}
-                  </p>
+                <div className={cn("p-2.5 rounded-xl border flex flex-col justify-between", selectedTransaction.sign > 0 ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200")}>
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-stone-500">Ilość</span>
+                    <p className={cn("font-black text-xs mt-1", selectedTransaction.sign > 0 ? "text-emerald-700" : "text-rose-700")}>
+                      {selectedTransaction.sign > 0 ? `+${selectedTransaction.quantity}` : `-${selectedTransaction.quantity}`} {selectedTransaction.unit}
+                    </p>
+                  </div>
+                  {(() => {
+                    const metrics = getBlachaMetricsForQty(selectedTransaction, selectedTransaction.quantity);
+                    if (!metrics) return null;
+                    const textParts = [];
+                    if (metrics.sheets !== undefined) {
+                      const roundedSheets = Math.round(metrics.sheets * 10) / 10;
+                      textParts.push(`${roundedSheets} ark.`);
+                    }
+                    textParts.push(`${parseFloat(metrics.m2.toFixed(2))} m²`);
+                    return (
+                      <p className={cn("text-[10px] font-bold mt-1", selectedTransaction.sign > 0 ? "text-emerald-700/80" : "text-rose-700/80")}>
+                        {textParts.join(' | ')}
+                      </p>
+                    );
+                  })()}
                 </div>
-                <div className={cn("p-2.5 rounded-xl border", selectedTransaction.sign > 0 ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200")}>
-                  <span className="text-[10px] font-bold uppercase text-stone-500">Wartość</span>
-                  <p className={cn("font-black text-xs mt-1", selectedTransaction.sign > 0 ? "text-emerald-700" : "text-rose-700")}>
-                    {selectedTransaction.sign > 0 ? '+' : '-'}{formatPLN(getTxTotalValue(selectedTransaction))}
-                  </p>
+                <div className={cn("p-2.5 rounded-xl border flex flex-col justify-between", selectedTransaction.sign > 0 ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200")}>
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-stone-500">Wartość</span>
+                    <p className={cn("font-black text-xs mt-1", selectedTransaction.sign > 0 ? "text-emerald-700" : "text-rose-700")}>
+                      {selectedTransaction.sign > 0 ? '+' : '-'}{formatPLN(getTxTotalValue(selectedTransaction))}
+                    </p>
+                  </div>
                 </div>
-                <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-100">
-                  <span className="text-[10px] text-stone-400 font-bold uppercase">Stan Po</span>
-                  <p className="font-bold text-stone-900 text-xs mt-1">{selectedTransaction.newBatchQuantity} {selectedTransaction.unit}</p>
+                <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-100 flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] text-stone-400 font-bold uppercase">Stan Po</span>
+                    <p className="font-bold text-stone-900 text-xs mt-1">{selectedTransaction.newBatchQuantity} {selectedTransaction.unit}</p>
+                  </div>
+                  {(() => {
+                    const metrics = getBlachaMetricsForQty(selectedTransaction, selectedTransaction.newBatchQuantity);
+                    if (!metrics || metrics.sheets === undefined) return null;
+                    return (
+                      <p className="text-[10px] text-stone-500 font-semibold mt-1">
+                        ≈ {Math.round(metrics.sheets * 10) / 10} ark.
+                      </p>
+                    );
+                  })()}
                 </div>
               </div>
 
