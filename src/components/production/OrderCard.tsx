@@ -20,6 +20,7 @@ interface OrderCardProps {
   disabled: boolean;
   isAdmin: boolean;
   activeWorkers: string[];
+  readOnly?: boolean;
 }
 
 export const OrderCard: React.FC<OrderCardProps> = ({ 
@@ -32,7 +33,8 @@ export const OrderCard: React.FC<OrderCardProps> = ({
   isWorking, 
   disabled, 
   isAdmin, 
-  activeWorkers 
+  activeWorkers,
+  readOnly = false
 }) => {
   const [showDetails, setShowDetails] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -325,37 +327,39 @@ export const OrderCard: React.FC<OrderCardProps> = ({
         </div>
       </div>
 
-      <div className="mt-6 z-0">
-        <button 
-          onClick={onStart}
-          disabled={disabled || isWorking || allElementsCompleted}
-          className={cn(
-            "w-full flex items-center justify-center gap-2 py-3 rounded-2xl font-bold transition-all active:scale-95",
-            isWorking 
-              ? "bg-emerald-100 text-emerald-700 cursor-default" 
-              : allElementsCompleted
-                ? "bg-stone-100 text-stone-400 cursor-not-allowed border border-stone-200"
-                : "bg-stone-900 text-white hover:bg-stone-800 shadow-md hover:shadow-lg disabled:opacity-30 disabled:cursor-not-allowed"
-          )}
-        >
-          {isWorking ? (
-            <>
-              <Clock size={18} className="animate-pulse" />
-              W trakcie pracy...
-            </>
-          ) : allElementsCompleted ? (
-            <>
-              <CheckCircle size={18} />
-              Wszystkie elementy gotowe
-            </>
-          ) : (
-            <>
-              <Play size={18} fill="currentColor" />
-              Zacznij pracę
-            </>
-          )}
-        </button>
-      </div>
+      {!readOnly && (
+        <div className="mt-6 z-0">
+          <button 
+            onClick={onStart}
+            disabled={disabled || isWorking || allElementsCompleted}
+            className={cn(
+              "w-full flex items-center justify-center gap-2 py-3 rounded-2xl font-bold transition-all active:scale-95",
+              isWorking 
+                ? "bg-emerald-100 text-emerald-700 cursor-default" 
+                : allElementsCompleted
+                  ? "bg-stone-100 text-stone-400 cursor-not-allowed border border-stone-200"
+                  : "bg-stone-900 text-white hover:bg-stone-800 shadow-md hover:shadow-lg disabled:opacity-30 disabled:cursor-not-allowed"
+            )}
+          >
+            {isWorking ? (
+              <>
+                <Clock size={18} className="animate-pulse" />
+                W trakcie pracy...
+              </>
+            ) : allElementsCompleted ? (
+              <>
+                <CheckCircle size={18} />
+                Wszystkie elementy gotowe
+              </>
+            ) : (
+              <>
+                <Play size={18} fill="currentColor" />
+                Zacznij pracę
+              </>
+            )}
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 }

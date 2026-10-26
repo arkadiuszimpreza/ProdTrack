@@ -90,7 +90,7 @@ service cloud.firestore {
     }
 
     // Biała lista aktywnych ról uprawnionych do zapisu w systemie
-    // Wyklucza: 'pending', 'tv-monitor', 'podglad' oraz wszelkie nieznane role
+    // Wyklucza: 'pending', 'tv-monitor', 'podglad', 'bot' oraz wszelkie nieznane role
     function isApprovedUser() {
       let role = getUserRole();
       return role in ['admin', 'worker', 'operator', 'operator-tablice', 'magazynier', 'operator-wms'];
@@ -126,7 +126,7 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.displayName is string && data.displayName.size() > 0 &&
-             data.email is string && data.role in ['admin', 'worker', 'operator', 'magazynier', 'operator-wms', 'tv-monitor', 'podglad', 'operator-tablice', 'pending'];
+             data.email is string && data.role in ['admin', 'worker', 'operator', 'magazynier', 'operator-wms', 'tv-monitor', 'podglad', 'operator-tablice', 'pending', 'bot'];
     }
 
     function isValidEmployee(data) {

@@ -8,9 +8,10 @@ import { db } from '../../firebase';
 interface MissingWeightsViewProps {
   orders: ProductionOrder[];
   onEditElements: (order: ProductionOrder) => void;
+  readOnly?: boolean;
 }
 
-export function MissingWeightsView({ orders, onEditElements }: MissingWeightsViewProps) {
+export function MissingWeightsView({ orders, onEditElements, readOnly = false }: MissingWeightsViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterReportedOnly, setFilterReportedOnly] = useState(false);
   
@@ -197,12 +198,14 @@ export function MissingWeightsView({ orders, onEditElements }: MissingWeightsVie
                         <p className="text-xs text-rose-600">Zlecenie bez elementów, wymaga podania wagi całkowitej.</p>
                       </div>
                       
-                      <button 
-                        onClick={() => onEditElements(order)}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-white text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-xl text-sm font-bold transition-colors"
-                      >
-                        <List size={14} /> Zarządzaj elementami
-                      </button>
+                      {!readOnly && (
+                        <button 
+                          onClick={() => onEditElements(order)}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-white text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-xl text-sm font-bold transition-colors"
+                        >
+                          <List size={14} /> Zarządzaj elementami
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -214,12 +217,14 @@ export function MissingWeightsView({ orders, onEditElements }: MissingWeightsVie
                             <p className="text-xs text-amber-700">Obecna waga: {el.weight || 0} kg</p>
                           </div>
                           
-                          <button 
-                            onClick={() => onEditElements(order)}
-                            className="flex items-center gap-2 px-3 py-1.5 bg-white text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-xl text-sm font-bold transition-colors"
-                          >
-                            <List size={14} /> Zarządzaj elementami
-                          </button>
+                          {!readOnly && (
+                            <button 
+                              onClick={() => onEditElements(order)}
+                              className="flex items-center gap-2 px-3 py-1.5 bg-white text-stone-700 border border-stone-200 hover:bg-stone-50 rounded-xl text-sm font-bold transition-colors"
+                            >
+                              <List size={14} /> Zarządzaj elementami
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>

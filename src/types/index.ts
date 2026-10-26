@@ -222,7 +222,7 @@ export interface Employee {
   createdAt?: any;
 }
 
-export type UserRole = 'admin' | 'worker' | 'operator' | 'magazynier' | 'operator-wms' | 'tv-monitor' | 'podglad' | 'operator-tablice' | 'pending';
+export type UserRole = 'admin' | 'worker' | 'operator' | 'magazynier' | 'operator-wms' | 'tv-monitor' | 'podglad' | 'operator-tablice' | 'pending' | 'bot';
 
 /**
  * Profil użytkownika systemu (osoby logującej się przez Google).
@@ -254,7 +254,7 @@ export interface UserProfile {
   displayName: string;
   /** Adres e-mail użytkownika */
   email: string;
-  /** Rola w systemie (admin - pełny dostęp, worker - terminal, operator - terminal, operator-wms - terminal z opcją wms, podglad - tylko odczyt wybranych widoków) */
+  /** Rola w systemie (admin - pełny dostęp, worker - terminal, operator - terminal, operator-wms - terminal z opcją wms, podglad - tylko odczyt wybranych widoków, bot - pełny wgląd we wszystkie moduły w trybie tylko do odczytu) */
   role: UserRole;
   /** Opcjonalne imię */
   firstName?: string;

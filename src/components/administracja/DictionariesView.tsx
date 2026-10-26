@@ -28,6 +28,7 @@ import { cn } from '../../utils/firestore-helpers';
 
 interface DictionariesViewProps {
   onBack?: () => void;
+  readOnly?: boolean;
 }
 
 type EditorState = { mode: 'add' } | { mode: 'edit'; key: string };
@@ -56,7 +57,7 @@ function displayValue(field: FieldDef, value: unknown, options: FieldOption[]): 
   return value === undefined || value === null ? '' : String(value);
 }
 
-export function DictionariesView({ onBack }: DictionariesViewProps) {
+export function DictionariesView({ onBack, readOnly = false }: DictionariesViewProps) {
   const [activeId, setActiveId] = useState<DictionaryId>('departments');
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [form, setForm] = useState<DictionaryRow>({});
@@ -290,7 +291,7 @@ export function DictionariesView({ onBack }: DictionariesViewProps) {
         <h3 className="text-lg font-bold text-stone-800">
           {DICTIONARY_TITLES[activeId]} <span className="text-stone-400 font-normal">({dictionary.items.length})</span>
         </h3>
-        {!editor && (
+        {!editor && !readOnly && (
           <div className="flex flex-wrap gap-2">
             <button
               onClick={handleSeeds}
@@ -356,7 +357,7 @@ export function DictionariesView({ onBack }: DictionariesViewProps) {
                   {field.label}
                 </th>
               ))}
-              <th className="px-4 py-3 text-sm font-semibold text-stone-600 text-right">Akcje</th>
+              {!readOnly && <th className="px-4 py-3 text-sm font-semibold text-stone-600 text-right">Akcje</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
@@ -369,38 +370,40 @@ export function DictionariesView({ onBack }: DictionariesViewProps) {
                       {displayValue(field, row[field.name], optionsFor(field, mpk.items))}
                     </td>
                   ))}
-                  <td className="px-4 py-3 text-right whitespace-nowrap">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => openEdit(row)}
-                        disabled={busy || editor !== null}
-                        title="Edytuj"
-                        className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-stone-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-40"
-                      >
-                        <Pencil size={18} />
-                      </button>
-                      <button
-                        onClick={() => handleToggle(key)}
-                        disabled={busy || editor !== null}
-                        className="px-3 min-h-[44px] text-sm font-medium text-stone-600 hover:bg-stone-100 rounded-lg transition-colors disabled:opacity-40"
-                      >
-                        {row.active === false ? 'Włącz' : 'Wyłącz'}
-                      </button>
-                    </div>
-                  </td>
+                  {!readOnly && (
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => openEdit(row)}
+                          disabled={busy || editor !== null}
+                          title="Edytuj"
+                          className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-stone-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-40"
+                        >
+                          <Pencil size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleToggle(key)}
+                          disabled={busy || editor !== null}
+                          className="px-3 min-h-[44px] text-sm font-medium text-stone-600 hover:bg-stone-100 rounded-lg transition-colors disabled:opacity-40"
+                        >
+                          {row.active === false ? 'Włącz' : 'Wyłącz'}
+                        </button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               );
             })}
             {dictionary.loading && (
               <tr>
-                <td colSpan={tableFields.length + 1} className="px-6 py-12 text-center text-stone-500">
+                <td colSpan={tableFields.length + (readOnly ? 0 : 1)} className="px-6 py-12 text-center text-stone-500">
                   Wczytuję…
                 </td>
               </tr>
             )}
             {!dictionary.loading && dictionary.items.length === 0 && (
               <tr>
-                <td colSpan={tableFields.length + 1} className="px-6 py-12 text-center text-stone-500">
+                <td colSpan={tableFields.length + (readOnly ? 0 : 1)} className="px-6 py-12 text-center text-stone-500">
                   Słownik jest pusty.
                 </td>
               </tr>

@@ -13,7 +13,8 @@ export function EmployeeManagementView({
   isImporting,
   importSummary,
   onClearSummary,
-  onClearAll
+  onClearAll,
+  readOnly = false
 }: {
   employees: Employee[],
   workStations?: WorkStation[],
@@ -24,7 +25,8 @@ export function EmployeeManagementView({
   onImport: (e: React.ChangeEvent<HTMLInputElement>) => void,
   isImporting: boolean,
   importSummary: { added: string[], skipped: string[] } | null,
-  onClearSummary: () => void
+  onClearSummary: () => void,
+  readOnly?: boolean
 }) {
   const [employeeNumber, setEmployeeNumber] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -117,35 +119,37 @@ export function EmployeeManagementView({
           </div>
         </div>
         
-        <div className="flex gap-3">
-          {employees.length > 0 && (
+        {!readOnly && (
+          <div className="flex gap-3">
+            {employees.length > 0 && (
+              <button 
+                onClick={() => setShowClearConfirm(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold hover:bg-red-100 transition-all border border-red-100"
+              >
+                <Trash2 size={18} />
+                Wyczyść wszystko
+              </button>
+            )}
+            <label className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-200 rounded-xl text-sm font-bold text-stone-600 hover:bg-stone-50 transition-all cursor-pointer shadow-sm">
+              <Upload size={18} className="text-emerald-600" />
+              Importuj z Excel
+              <input 
+                type="file" 
+                accept=".xlsx, .xls" 
+                className="hidden" 
+                onChange={onImport}
+                disabled={isImporting}
+              />
+            </label>
             <button 
-              onClick={() => setShowClearConfirm(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold hover:bg-red-100 transition-all border border-red-100"
+              onClick={() => setShowAddForm(!showAddForm)}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
             >
-              <Trash2 size={18} />
-              Wyczyść wszystko
+              <Plus size={18} />
+              Dodaj pracownika
             </button>
-          )}
-          <label className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-200 rounded-xl text-sm font-bold text-stone-600 hover:bg-stone-50 transition-all cursor-pointer shadow-sm">
-            <Upload size={18} className="text-emerald-600" />
-            Importuj z Excel
-            <input 
-              type="file" 
-              accept=".xlsx, .xls" 
-              className="hidden" 
-              onChange={onImport}
-              disabled={isImporting}
-            />
-          </label>
-          <button 
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
-          >
-            <Plus size={18} />
-            Dodaj pracownika
-          </button>
-        </div>
+          </div>
+        )}
       </div>
 
       <AnimatePresence>
@@ -343,13 +347,13 @@ export function EmployeeManagementView({
                 <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Stanowisko</th>
                 <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Dom. Stanowisko (MPK)</th>
                 <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Karta RFID</th>
-                <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400 text-right">Akcje</th>
+                {!readOnly && <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-400 text-right">Akcje</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
               {displayedEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-12 text-center text-stone-400">
+                  <td colSpan={readOnly ? 6 : 7} className="p-12 text-center text-stone-400">
                     <UserPlus size={48} className="mx-auto mb-4 opacity-10" />
                     <p>{showArchived ? 'Brak zarchiwizowanych pracowników.' : 'Brak pracowników w systemie.'}</p>
                     {!showArchived && <p className="text-xs">Dodaj ręcznie lub zaimportuj z pliku Excel.</p>}
@@ -449,8 +453,9 @@ export function EmployeeManagementView({
                         emp.rfidCard || '—'
                       )}
                     </td>
-                    <td className="p-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                    {!readOnly && (
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
                         {editingId === emp.id ? (
                           <div className="flex items-center gap-1">
                             <button 
@@ -529,7 +534,8 @@ export function EmployeeManagementView({
                         )}
                       </div>
                     </td>
-                  </tr>
+                  )}
+                </tr>
                 ))
               )}
             </tbody>

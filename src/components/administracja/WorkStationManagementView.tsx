@@ -9,12 +9,14 @@ export function WorkStationManagementView({
   stations,
   onAdd,
   onDelete,
-  onUpdate
+  onUpdate,
+  readOnly = false
 }: {
   stations: WorkStation[],
   onAdd: (data: Omit<WorkStation, 'id' | 'createdAt'>) => Promise<boolean>,
   onDelete: (id: string) => Promise<boolean>,
-  onUpdate: (id: string, data: Partial<WorkStation>) => Promise<boolean>
+  onUpdate: (id: string, data: Partial<WorkStation>) => Promise<boolean>,
+  readOnly?: boolean
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -109,23 +111,25 @@ export function WorkStationManagementView({
           Zarządzanie Stanowiskami
         </h2>
         
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={handleProposeMpk}
-            disabled={isSubmitting || mpkList.length === 0}
-            title={mpkList.length === 0 ? 'Najpierw wczytaj słownik MPK (Administracja → Słowniki systemowe)' : undefined}
-            className="px-4 py-2 min-h-[44px] bg-white border border-stone-200 text-stone-700 rounded-xl text-sm font-bold hover:bg-stone-50 transition-all disabled:opacity-50"
-          >
-            Zaproponuj MPK z numeru w nazwie
-          </button>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
-          >
-            <Plus size={18} />
-            Dodaj stanowisko
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={handleProposeMpk}
+              disabled={isSubmitting || mpkList.length === 0}
+              title={mpkList.length === 0 ? 'Najpierw wczytaj słownik MPK (Administracja → Słowniki systemowe)' : undefined}
+              className="px-4 py-2 min-h-[44px] bg-white border border-stone-200 text-stone-700 rounded-xl text-sm font-bold hover:bg-stone-50 transition-all disabled:opacity-50"
+            >
+              Zaproponuj MPK z numeru w nazwie
+            </button>
+            <button
+              onClick={() => setShowAddForm(!showAddForm)}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
+            >
+              <Plus size={18} />
+              Dodaj stanowisko
+            </button>
+          </div>
+        )}
       </div>
 
       {notice && (
@@ -222,7 +226,7 @@ export function WorkStationManagementView({
                   <th className="p-4 text-left text-[10px] font-black uppercase tracking-wider text-stone-400">Nazwa</th>
                   <th className="p-4 text-left text-[10px] font-black uppercase tracking-wider text-stone-400">Opis</th>
                   <th className="p-4 text-left text-[10px] font-black uppercase tracking-wider text-stone-400">MPK</th>
-                  <th className="p-4 text-right text-[10px] font-black uppercase tracking-wider text-stone-400">Akcje</th>
+                  {!readOnly && <th className="p-4 text-right text-[10px] font-black uppercase tracking-wider text-stone-400">Akcje</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-50">
@@ -271,8 +275,9 @@ export function WorkStationManagementView({
                         mpkLabel(station.mpkCode) || <span className="text-stone-300 italic">Nie przypisano</span>
                       )}
                     </td>
-                    <td className="p-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                    {!readOnly && (
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
                         {editingId === station.id ? (
                           <div className="flex items-center gap-1">
                             <button 
@@ -336,6 +341,7 @@ export function WorkStationManagementView({
                         )}
                       </div>
                     </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

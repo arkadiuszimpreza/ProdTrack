@@ -8,9 +8,10 @@ import { cn } from '../../utils/firestore-helpers';
 interface TechOperationsViewProps {
   workStations: WorkStation[];
   onBack?: () => void;
+  readOnly?: boolean;
 }
 
-export function TechOperationsView({ workStations, onBack }: TechOperationsViewProps) {
+export function TechOperationsView({ workStations, onBack, readOnly = false }: TechOperationsViewProps) {
   const [operations, setOperations] = useState<TechOperation[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -87,7 +88,7 @@ export function TechOperationsView({ workStations, onBack }: TechOperationsViewP
             Słownik Operacji Technologicznych
           </h2>
         </div>
-        {!isAdding && !editingId && (
+        {!isAdding && !editingId && !readOnly && (
           <button
             onClick={() => {
               setFormWorkStationId(workStations[0]?.id || '');
@@ -152,7 +153,7 @@ export function TechOperationsView({ workStations, onBack }: TechOperationsViewP
             <tr className="bg-stone-50 border-b border-stone-200">
               <th className="px-6 py-4 text-sm font-semibold text-stone-600">Nazwa operacji</th>
               <th className="px-6 py-4 text-sm font-semibold text-stone-600">Gniazdo produkcyjne</th>
-              <th className="px-6 py-4 text-sm font-semibold text-stone-600 text-right">Akcje</th>
+              {!readOnly && <th className="px-6 py-4 text-sm font-semibold text-stone-600 text-right">Akcje</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
@@ -160,32 +161,34 @@ export function TechOperationsView({ workStations, onBack }: TechOperationsViewP
               <tr key={op.id} className="hover:bg-stone-50 transition-colors">
                 <td className="px-6 py-4 font-medium text-stone-900">{op.name}</td>
                 <td className="px-6 py-4 text-stone-600">{getStationName(op.workStationId)}</td>
-                <td className="px-6 py-4 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingId(op.id!);
-                        setFormName(op.name);
-                        setFormWorkStationId(op.workStationId);
-                        setIsAdding(false);
-                      }}
-                      className="p-2 text-stone-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                    >
-                      <Pencil size={18} />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(op.id!)}
-                      className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </td>
+                {!readOnly && (
+                  <td className="px-6 py-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => {
+                          setEditingId(op.id!);
+                          setFormName(op.name);
+                          setFormWorkStationId(op.workStationId);
+                          setIsAdding(false);
+                        }}
+                        className="p-2 text-stone-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        <Pencil size={18} />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(op.id!)}
+                        className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
             {operations.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-6 py-12 text-center text-stone-500">
+                <td colSpan={readOnly ? 2 : 3} className="px-6 py-12 text-center text-stone-500">
                   Brak zdefiniowanych operacji. Kliknij "Dodaj operację" aby rozpocząć.
                 </td>
               </tr>

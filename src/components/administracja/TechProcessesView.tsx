@@ -8,9 +8,10 @@ import { cn } from '../../utils/firestore-helpers';
 interface TechProcessesViewProps {
   workStations: WorkStation[];
   onBack?: () => void;
+  readOnly?: boolean;
 }
 
-export function TechProcessesView({ workStations, onBack }: TechProcessesViewProps) {
+export function TechProcessesView({ workStations, onBack, readOnly = false }: TechProcessesViewProps) {
   const [processes, setProcesses] = useState<TechProcess[]>([]);
   const [operations, setOperations] = useState<TechOperation[]>([]);
   
@@ -155,7 +156,7 @@ export function TechProcessesView({ workStations, onBack }: TechProcessesViewPro
             Słownik Procesów Technologicznych
           </h2>
         </div>
-        {!isAdding && !editingId && (
+        {!isAdding && !editingId && !readOnly && (
           <button
             onClick={() => setIsAdding(true)}
             className="flex items-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-xl hover:bg-stone-800 transition-colors font-medium text-sm shadow-sm"
@@ -302,25 +303,27 @@ export function TechProcessesView({ workStations, onBack }: TechProcessesViewPro
           <div key={proc.id} className="bg-white border border-stone-200 rounded-2xl p-5 shadow-sm hover:border-emerald-200 transition-colors">
             <div className="flex justify-between items-start mb-4">
               <h3 className="font-bold text-stone-900 text-lg leading-tight">{proc.name}</h3>
-              <div className="flex gap-1">
-                <button
-                  onClick={() => {
-                    setEditingId(proc.id!);
-                    setFormName(proc.name);
-                    setFormSteps(proc.steps || []);
-                    setIsAdding(false);
-                  }}
-                  className="p-1.5 text-stone-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                >
-                  <Pencil size={16} />
-                </button>
-                <button
-                  onClick={() => handleDelete(proc.id!)}
-                  className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
+              {!readOnly && (
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => {
+                      setEditingId(proc.id!);
+                      setFormName(proc.name);
+                      setFormSteps(proc.steps || []);
+                      setIsAdding(false);
+                    }}
+                    className="p-1.5 text-stone-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  >
+                    <Pencil size={16} />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(proc.id!)}
+                    className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )}
             </div>
             
             <div className="space-y-4 pt-2">

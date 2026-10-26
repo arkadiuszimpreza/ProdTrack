@@ -147,7 +147,7 @@ export function MainDashboard(props: MainDashboardProps) {
       if (!['live', 'wms-inventory', 'wms-reservations', 'timeline'].includes(view)) {
         setView('live');
       }
-    } else if (role !== 'ADMIN' && role !== 'PODGLAD' && view !== 'orders' && view !== 'history') {
+    } else if (role !== 'ADMIN' && role !== 'PODGLAD' && role !== 'BOT' && view !== 'orders' && view !== 'history') {
       // Pracownicy see only orders or history
       setView('orders');
     }
@@ -429,8 +429,9 @@ export function MainDashboard(props: MainDashboardProps) {
 
   const currentUser = props.profile?.displayName || props.user?.displayName || props.user?.email?.split('@')[0] || 'Zalogowany Pracownik';
   const role = (props.overrideRole || props.profile?.role)?.toUpperCase() as string;
-  const isWMSUser = props.isAdmin || role === 'MAGAZYNIER';
+  const isWMSUser = props.isAdmin || role === 'MAGAZYNIER' || role === 'BOT';
   const isPodglad = role === 'PODGLAD';
+  const isBot = role === 'BOT';
 
   return (
     <ErrorBoundary>
@@ -478,6 +479,7 @@ export function MainDashboard(props: MainDashboardProps) {
                 <option value="magazynier">MAGAZYNIER</option>
                 <option value="tv-monitor">TV MONITOR</option>
                 <option value="podglad">PODGLĄD</option>
+                <option value="bot">BOT (ODCZYT)</option>
               </select>
             </div>
           )}
@@ -531,7 +533,7 @@ export function MainDashboard(props: MainDashboardProps) {
               </div>
             )}
 
-            {props.isAdmin && (
+            {(props.isAdmin || isBot) && (
               <>
                 <div className="mt-6">
                   <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mx-3 mb-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">Zarządzanie</h4>
@@ -542,8 +544,12 @@ export function MainDashboard(props: MainDashboardProps) {
                     <SidebarItem active={view === 'element-stats'} onClick={() => { setView('element-stats'); setIsSidebarOpen(false); }} icon={<Package size={18} />} text="Statystyki Elementów" />
                     <SidebarItem active={view === 'tonnage-stats'} onClick={() => { setView('tonnage-stats'); setIsSidebarOpen(false); }} icon={<BarChart2 size={18} />} text="Zestawienie Tonażu" />
                     <SidebarItem active={false} onClick={() => window.open('#tv', '_blank')} icon={<Activity size={18} />} text="Otwórz TV Monitor" />
-                    <SidebarItem active={view === 'manual-entry'} onClick={() => { setView('manual-entry'); setIsSidebarOpen(false); }} icon={<PenTool size={18} />} text="Wpis ręczny" />
-                    <SidebarItem active={view === 'attendance-import'} onClick={() => { setView('attendance-import'); setIsSidebarOpen(false); }} icon={<FileSpreadsheet size={18} />} text="Import Obecności" />
+                    {props.isAdmin && (
+                      <>
+                        <SidebarItem active={view === 'manual-entry'} onClick={() => { setView('manual-entry'); setIsSidebarOpen(false); }} icon={<PenTool size={18} />} text="Wpis ręczny" />
+                        <SidebarItem active={view === 'attendance-import'} onClick={() => { setView('attendance-import'); setIsSidebarOpen(false); }} icon={<FileSpreadsheet size={18} />} text="Import Obecności" />
+                      </>
+                    )}
                     <SidebarItem active={view === 'attendance-oee'} onClick={() => { setView('attendance-oee'); setIsSidebarOpen(false); }} icon={<BarChart2 size={18} />} text="Bilans czasu pracy" />
                   </div>
                 </div>
@@ -557,7 +563,9 @@ export function MainDashboard(props: MainDashboardProps) {
                     <SidebarItem active={view === 'system-dictionaries'} onClick={() => { setView('system-dictionaries'); setIsSidebarOpen(false); }} icon={<BookOpen size={18} />} text="Słowniki systemowe" />
                     <SidebarItem active={view === 'tech-board-drawings'} onClick={() => { setView('tech-board-drawings'); setIsSidebarOpen(false); }} icon={<FileText size={18} />} text="Rysunki Tablic (PDF)" />
                     <SidebarItem active={view === 'docs'} onClick={() => { setView('docs'); setIsSidebarOpen(false); }} icon={<FileText size={18} />} text="Dokumentacja" />
-                    <SidebarItem active={view === 'wms-admin'} onClick={() => { setView('wms-admin'); setIsSidebarOpen(false); }} icon={<Settings size={18} />} text="Skrypty WMS" />
+                    {props.isAdmin && (
+                      <SidebarItem active={view === 'wms-admin'} onClick={() => { setView('wms-admin'); setIsSidebarOpen(false); }} icon={<Settings size={18} />} text="Skrypty WMS" />
+                    )}
                   </div>
                 </div>
               </>
@@ -751,36 +759,37 @@ export function MainDashboard(props: MainDashboardProps) {
               </AnimatePresence>
 
               {/* CONTENT AREA SWITCHER */}
-              {view === 'live' && (props.isAdmin || isPodglad) ? (
+              {view === 'live' && (props.isAdmin || isPodglad || isBot) ? (
                 <LiveWorkView 
                   activeLogs={props.allActiveLogs} 
                   orders={combinedOrdersToDisplay} 
                   onForceStop={handleAdminForceStop}
-                  readOnly={isPodglad}
+                  readOnly={isPodglad || isBot}
                 />
-              ) : view === 'employees' && props.isAdmin ? (
+              ) : view === 'employees' && (props.isAdmin || isBot) ? (
                 <EmployeeManagementView 
                   employees={props.employees} onAdd={props.onAddEmployee} onDelete={props.onDeleteEmployee} onUpdate={props.onUpdateEmployee} 
                   onClearAll={props.onClearEmployees} onImport={props.onEmployeeImport} isImporting={props.isImporting} 
                   importSummary={props.importSummary} onClearSummary={props.onClearSummary} workStations={props.workStations}
+                  readOnly={isBot}
                 />
-              ) : view === 'attendance-oee' && props.isAdmin ? (
+              ) : view === 'attendance-oee' && (props.isAdmin || isBot) ? (
                 <AttendanceOEEView employees={props.employees} />
               ) : view === 'attendance-import' && props.isAdmin ? (
                 <AttendanceImportView employees={props.employees} />
-              ) : view === 'stations' && props.isAdmin ? (
-                <WorkStationManagementView stations={props.workStations} onAdd={props.onAddStation} onDelete={props.onDeleteStation} onUpdate={props.onUpdateStation} />
-              ) : view === 'tech-operations' && props.isAdmin ? (
-                <TechOperationsView workStations={props.workStations} onBack={() => setView('live')} />
-              ) : view === 'tech-processes' && props.isAdmin ? (
-                <TechProcessesView workStations={props.workStations} onBack={() => setView('live')} />
-              ) : view === 'system-dictionaries' && props.isAdmin ? (
-                <DictionariesView onBack={() => setView('live')} />
-              ) : view === 'tech-board-drawings' && props.isAdmin ? (
+              ) : view === 'stations' && (props.isAdmin || isBot) ? (
+                <WorkStationManagementView stations={props.workStations} onAdd={props.onAddStation} onDelete={props.onDeleteStation} onUpdate={props.onUpdateStation} readOnly={isBot} />
+              ) : view === 'tech-operations' && (props.isAdmin || isBot) ? (
+                <TechOperationsView workStations={props.workStations} onBack={() => setView('live')} readOnly={isBot} />
+              ) : view === 'tech-processes' && (props.isAdmin || isBot) ? (
+                <TechProcessesView workStations={props.workStations} onBack={() => setView('live')} readOnly={isBot} />
+              ) : view === 'system-dictionaries' && (props.isAdmin || isBot) ? (
+                <DictionariesView onBack={() => setView('live')} readOnly={isBot} />
+              ) : view === 'tech-board-drawings' && (props.isAdmin || isBot) ? (
                 <BoardDrawingsManager orders={props.orders} userProfile={props.profile} />
               ) : view === 'missing-weights' ? (
-                <MissingWeightsView orders={props.orders} onEditElements={setEditingOrderElements} />
-              ) : view === 'orders-overview' && props.isAdmin ? (
+                <MissingWeightsView orders={props.orders} onEditElements={setEditingOrderElements} readOnly={isBot} />
+              ) : view === 'orders-overview' && (props.isAdmin || isBot) ? (
                 <OrdersOverviewView 
                   orders={ordersForAnalyticalViews} 
                   onExcelImport={props.onExcelImport}
@@ -833,31 +842,32 @@ export function MainDashboard(props: MainDashboardProps) {
                           isWorking={props.activeLog?.orderId === order.id} 
                           disabled={!!props.activeLog && props.activeLog.orderId !== order.id}
                           isAdmin={props.isAdmin} 
+                          readOnly={isBot}
                           activeWorkers={props.allActiveLogs.filter(log => log.orderId === order.id).map(log => log.userName)}
                         />
                       ))}
                     </div>
                   )}
                 </div>
-              ) : view === 'element-stats' && props.isAdmin ? (
+              ) : view === 'element-stats' && (props.isAdmin || isBot) ? (
                 <ElementStatsView orders={ordersForAnalyticalViews} employees={props.employees} />
-              ) : view === 'tonnage-stats' && props.isAdmin ? (
+              ) : view === 'tonnage-stats' && (props.isAdmin || isBot) ? (
                 <TonnageStatsView orders={ordersForAnalyticalViews} />
-              ) : view === 'reports' && props.isAdmin ? (
+              ) : view === 'reports' && (props.isAdmin || isBot) ? (
                 <ReportsView employees={props.employees} orders={ordersForAnalyticalViews} />
-              ) : view === 'timeline' && (props.isAdmin || isPodglad) ? (
+              ) : view === 'timeline' && (props.isAdmin || isPodglad || isBot) ? (
                 <EmployeeTimelineView 
                   orders={ordersForAnalyticalViews} 
                   onViewOrderLogs={setViewingOrderLogs} 
                   onEditElements={setEditingOrderElements}
                 />
               ) : view === 'wms-inventory' && (isWMSUser || isPodglad) ? (
-                <InventoryYardView readOnly={isPodglad} />
+                <InventoryYardView readOnly={isPodglad || isBot} />
               ) : view === 'wms-reservations' && (isWMSUser || isPodglad) ? (
-                <MaterialReservationsView readOnly={isPodglad} />
+                <MaterialReservationsView readOnly={isPodglad || isBot} />
               ) : view === 'wms-deliveries' && isWMSUser ? (
-                <ExpectedDeliveriesView onReceiveClick={setItemToReceive} currentUser={currentUser} isAdmin={props.isAdmin} />
-              ) : view === 'wms-deliveries-admin' && props.isAdmin ? (
+                <ExpectedDeliveriesView onReceiveClick={isBot ? undefined : setItemToReceive} currentUser={currentUser} isAdmin={props.isAdmin} />
+              ) : view === 'wms-deliveries-admin' && (props.isAdmin || isBot) ? (
                 <ExpectedDeliveriesAdminView currentUser={currentUser} />
               ) : view === 'wms-registry' && isWMSUser ? (
                 <ArticleRegistryView />
@@ -885,7 +895,7 @@ export function MainDashboard(props: MainDashboardProps) {
                   <SequenceMigration />
                   <DraftMigration />
                 </div>
-              ) : view === 'docs' && props.isAdmin ? (
+              ) : view === 'docs' && (props.isAdmin || isBot) ? (
                 <DocsView />
               ) : (
                 <HistoryView isAdmin={props.isAdmin} orders={props.orders} employees={props.employees} />
