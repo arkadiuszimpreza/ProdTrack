@@ -6,3 +6,10 @@ coverage/
 .env*
 !.env.example
 dist/
+# wyniki buildu / cache Firebase (generowane przy deployu)
+functions/lib/
+.firebase/
+
+# wyniki buildu / cache Firebase (generowane przy deployu)
+functions/lib/
+.firebase/
