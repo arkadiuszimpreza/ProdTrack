@@ -51,6 +51,20 @@ function ConnectionErrorBanner({ message }: { message: string }) {
   );
 }
 
+// Błędy, przy których serwer po prostu nie odpowiedział (brak sieci, timeout, chwilowa
+// awaria Firebase). Sesja logowania jest wtedy nadal ważna — nie wylogowujemy, ponawiamy.
+// Celowo NIE ma tu 'permission-denied' (np. konto spoza @erplast.pl) — to dalej wylogowuje.
+const TRANSIENT_ERROR_CODES = [
+  'unavailable', 'deadline-exceeded', 'resource-exhausted', 'aborted', 'cancelled', 'internal', 'unknown',
+  'auth/network-request-failed',
+];
+
+function isTransientAuthError(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && TRANSIENT_ERROR_CODES.includes(code)) return true;
+  return !navigator.onLine;
+}
+
 export default function App() {
   const [isTvMode, setIsTvMode] = useState(
     window.location.pathname === '/tv' || window.location.hash === '#tv'
@@ -65,7 +79,9 @@ export default function App() {
   // ZMIANA (audyt finding #10): komunikat o błędzie logowania/weryfikacji konta —
   // wyświetlany na ekranie logowania, gdy onAuthStateChanged napotka błąd (patrz niżej).
   const [authError, setAuthError] = useState<string | null>(null);
-  
+  // Komunikat "ponawiam łączenie" — gdy profil nie wczytał się przez brak sieci (bez wylogowania).
+  const [authRetryMessage, setAuthRetryMessage] = useState<string | null>(null);
+
   const currentRole = (overrideRole || profile?.role)?.toLowerCase() as UserRole | undefined;
   const isAdmin = currentRole === 'admin';
   const isPending = currentRole === 'pending';
@@ -100,55 +116,108 @@ export default function App() {
   // --- LOGIKA AUTORYZACJI ---
   useEffect(() => {
     let unsubProfileSnapshot: (() => void) | null = null;
+    // ZMIANA (wylogowania na hali): ponawianie wczytania profilu po błędzie sieci.
+    // authGeneration rośnie przy każdej zmianie stanu logowania — próba z "poprzedniego"
+    // logowania (np. zaplanowana przed wylogowaniem) sprawdza ją i po prostu się kończy.
+    let authGeneration = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryNow: (() => void) | null = null;
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
+    const clearRetry = () => {
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = null;
+      retryNow = null;
+      setAuthRetryMessage(null);
+    };
+
+    // Powrót sieci (np. TV złapało Wi-Fi) — nie czekamy na timer, próbujemy od razu.
+    const handleOnline = () => { if (retryNow) retryNow(); };
+    window.addEventListener('online', handleOnline);
+
+    const loadProfile = async (u: FirebaseUser, generation: number, attempt: number) => {
+      // ZMIANA (audyt finding #10): bez try/catch, błąd w getDoc/setDoc (np. brak sieci,
+      // albo konto spoza domeny @erplast.pl odrzucone przez firestore.rules) przerywał tę
+      // funkcję PRZED linią setLoading(false) — ekran zostawał na wiecznym spinnerze,
+      // z którego nie było wyjścia bez twardego odświeżenia strony.
+      try {
+        const userRef = doc(db, 'users', u.uid);
+        const userDoc = await getDoc(userRef);
+        if (generation !== authGeneration) return;
+        if (userDoc.exists()) {
+          setProfile({ ...userDoc.data(), uid: u.uid } as UserProfile);
+        } else {
+          const newProfile = { uid: u.uid, displayName: u.displayName || 'Użytkownik', email: u.email || '', role: 'pending' };
+          await setDoc(userRef, newProfile);
+          if (generation !== authGeneration) return;
+          setProfile(newProfile as UserProfile);
+        }
+
+        // Live snapshot profilu — natychmiastowe odblokowanie po zatwierdzeniu roli przez admina
+        unsubProfileSnapshot = onSnapshot(userRef, (snap) => {
+          if (snap.exists()) {
+            setProfile({ ...snap.data(), uid: u.uid } as UserProfile);
+          }
+        });
+        setAuthError(null);
+        setAuthRetryMessage(null);
+        setLoading(false);
+      } catch (e) {
+        if (generation !== authGeneration) return;
+
+        // ZMIANA (wylogowania na hali): błąd sieci NIE wylogowuje. Wcześniej każdy błąd
+        // (także chwilowy brak Wi-Fi przy starcie TV albo przy auto-odświeżeniu po
+        // aktualizacji) kończył się signOut — i trzeba było podchodzić do ekranu
+        // i wpisywać hasło Google. Sesja Firebase jest wtedy nadal ważna, więc czekamy
+        // i ponawiamy: 5 s, 10 s, 20 s, potem co 30 s (albo od razu po powrocie sieci).
+        if (isTransientAuthError(e)) {
+          const delay = Math.min(5000 * 2 ** attempt, 30000);
+          console.warn(`Brak połączenia przy wczytywaniu profilu — ponowna próba za ${delay / 1000} s.`, e);
+          setAuthRetryMessage('Brak połączenia z serwerem. Ponawiam łączenie… Nie trzeba logować się ponownie.');
+          retryNow = () => {
+            if (retryTimer) clearTimeout(retryTimer);
+            retryTimer = null;
+            retryNow = null;
+            loadProfile(u, generation, attempt + 1);
+          };
+          retryTimer = setTimeout(retryNow, delay);
+          return;
+        }
+
+        console.error('Błąd podczas logowania / weryfikacji konta:', e);
+        // Odmowa dostępu (np. konto spoza domeny @erplast.pl odrzucone przez firestore.rules):
+        // wracamy do czystego ekranu logowania z jasnym komunikatem, zamiast zostawiać
+        // aplikację w "dziurawym" stanie (user zalogowany w Firebase Auth, ale bez profilu).
+        setProfile(null);
+        setUser(null);
+        setAuthRetryMessage(null);
+        setAuthError('Nie udało się zweryfikować konta. Sprawdź, czy logujesz się kontem w domenie @erplast.pl i czy masz połączenie z internetem, a następnie spróbuj ponownie.');
+        setLoading(false);
+        try { await signOut(auth); } catch { /* najlepszy wysiłek — i tak wyzerowaliśmy lokalny stan */ }
+      }
+    };
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
+      authGeneration++;
+      clearRetry();
       if (unsubProfileSnapshot) {
         unsubProfileSnapshot();
         unsubProfileSnapshot = null;
       }
 
       setUser(u);
-      // ZMIANA (audyt finding #10): bez try/catch, błąd w getDoc/setDoc (np. brak sieci,
-      // albo konto spoza domeny @erplast.pl odrzucone przez firestore.rules) przerywał tę
-      // funkcję PRZED linią setLoading(false) — ekran zostawał na wiecznym spinnerze,
-      // z którego nie było wyjścia bez twardego odświeżenia strony.
-      try {
-        if (u) {
-          const userRef = doc(db, 'users', u.uid);
-          const userDoc = await getDoc(userRef);
-          if (userDoc.exists()) {
-            setProfile({ ...userDoc.data(), uid: u.uid } as UserProfile);
-          } else {
-            const newProfile = { uid: u.uid, displayName: u.displayName || 'Użytkownik', email: u.email || '', role: 'pending' };
-            await setDoc(userRef, newProfile);
-            setProfile(newProfile as UserProfile);
-          }
-
-          // Live snapshot profilu — natychmiastowe odblokowanie po zatwierdzeniu roli przez admina
-          unsubProfileSnapshot = onSnapshot(userRef, (snap) => {
-            if (snap.exists()) {
-              setProfile({ ...snap.data(), uid: u.uid } as UserProfile);
-            }
-          });
-          setAuthError(null);
-        } else {
-          setProfile(null);
-        }
-      } catch (e) {
-        console.error('Błąd podczas logowania / weryfikacji konta:', e);
-        // Wracamy do czystego ekranu logowania z jasnym komunikatem, zamiast zostawiać
-        // aplikację w "dziurawym" stanie (user zalogowany w Firebase Auth, ale bez profilu).
+      if (u) {
+        loadProfile(u, authGeneration, 0);
+      } else {
         setProfile(null);
-        setUser(null);
-        setAuthError('Nie udało się zweryfikować konta. Sprawdź, czy logujesz się kontem w domenie @erplast.pl i czy masz połączenie z internetem, a następnie spróbuj ponownie.');
-        try { await signOut(auth); } catch { /* najlepszy wysiłek — i tak wyzerowaliśmy lokalny stan */ }
-      } finally {
         setLoading(false);
       }
     });
 
     return () => {
       unsubscribeAuth();
+      authGeneration++;
+      clearRetry();
+      window.removeEventListener('online', handleOnline);
       if (unsubProfileSnapshot) unsubProfileSnapshot();
     };
   }, []);
@@ -286,8 +355,14 @@ export default function App() {
   }
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-stone-50">
+    <div className="min-h-screen flex flex-col items-center justify-center gap-6 bg-stone-50 p-4">
       <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full" />
+      {authRetryMessage && (
+        <div className="max-w-sm text-center">
+          <p className="text-sm font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">{authRetryMessage}</p>
+          <button onClick={handleLogout} className="mt-4 min-h-[44px] px-4 text-sm font-bold text-stone-500 hover:text-stone-800 underline">Wyloguj i zaloguj innym kontem</button>
+        </div>
+      )}
     </div>
   );
 
